@@ -1294,7 +1294,8 @@ static void *task_push_core_updater_download_internal(
    download_handle->local_core_path          = strdup(list_entry->local_core_path);
    download_handle->display_name             = strdup(list_entry->display_name);
    download_handle->local_crc                = crc;
-   download_handle->remote_crc               = list_entry->crc;
+   download_handle->remote_crc               = list_entry->is_custom_source
+         ? 0 : list_entry->crc;
    download_handle->crc_match                = false;
    download_handle->http_task                = NULL;
    download_handle->http_task_finished       = false;
@@ -1473,7 +1474,8 @@ static void task_update_installed_cores_handler(retro_task_t *task)
                   update_installed_handle->list_index,
                   &list_entry))
             {
-               if (path_is_valid(list_entry->local_core_path))
+               if (path_is_valid(list_entry->local_core_path)
+                     && !list_entry->is_custom_source)
                {
                   core_installed                           = true;
                   update_installed_handle->installed_index =
@@ -1483,6 +1485,9 @@ static void task_update_installed_cores_handler(retro_task_t *task)
                   RARCH_LOG("[Core Updater] Checking: \"%s\"...\n",
                         list_entry->local_core_path);
                }
+               else if (list_entry->is_custom_source)
+                  RARCH_LOG("[Core Updater] Skipping automatic CRC check for custom source: \"%s\".\n",
+                        list_entry->display_name);
             }
 
             /* Update progress display */

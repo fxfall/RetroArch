@@ -31,6 +31,7 @@
 #include "core_info.h"
 
 #include "core_updater_list.h"
+#include "core_release_source.h"
 
 /* Holds all entries in a core updater list */
 struct core_updater_list
@@ -443,6 +444,24 @@ static bool core_updater_list_set_paths(
       remote_core_path[0] = '\0';
       net_http_urlencode_full(
             remote_core_path, local_core_path, sizeof(remote_core_path));
+
+      /* Keep the buildbot listing as the source of core names, dates and
+       * metadata, but redirect the explicitly allowlisted forked cores to
+       * their GitHub Release assets. All other cores retain the upstream
+       * buildbot URL unchanged. */
+      {
+         char release_url[PATH_MAX_LENGTH];
+
+         if (core_release_source_get_url(
+                  network_buildbot_url,
+                  filename_str,
+                  release_url,
+                  sizeof(release_url)))
+         {
+            strlcpy(remote_core_path, release_url, sizeof(remote_core_path));
+            entry->is_custom_source = true;
+         }
+      }
    }
 
    _len = strlen(remote_core_path) + 1;
@@ -649,6 +668,7 @@ static bool core_updater_list_push_entry(
    list_entry->description      = entry->description;
    list_entry->licenses_list    = entry->licenses_list;
    list_entry->is_experimental  = entry->is_experimental;
+   list_entry->is_custom_source = entry->is_custom_source;
 
    /* Copy crc */
    list_entry->crc              = entry->crc;

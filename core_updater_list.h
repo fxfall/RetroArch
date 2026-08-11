@@ -67,6 +67,10 @@ typedef struct
    core_updater_list_date_t date;   /* unsigned alignment */
    uint32_t crc;
    bool is_experimental;
+   /* The URL is supplied by a fork/release source rather than the
+    * buildbot. Such entries cannot use the buildbot CRC for automatic
+    * update checks. */
+   bool is_custom_source;
 } core_updater_list_entry_t;
 
 /* Prevent direct access to core_updater_list_t
