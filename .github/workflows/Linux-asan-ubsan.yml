@@ -79,7 +79,7 @@ jobs:
             libxml2-dev yasm
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v7
 
       - name: Configure (no menu, no discord/cheevos/networking, sdl2 on)
         # Trim the build surface for the first iteration so any
