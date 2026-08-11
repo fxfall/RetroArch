@@ -109,6 +109,10 @@
 #include "../runloop.h"
 #include "../verbosity.h"
 
+#ifdef HAVE_ROMX
+#include "../romx_frontend.h"
+#endif
+
 #ifdef HAVE_PRESENCE
 #include "../network/presence.h"
 #endif
@@ -296,13 +300,28 @@ static void content_file_list_free_transient_data(
    {
       content_file_info_t *file_info = &file_list->entries[i];
 
-      if (file_info->data &&
+      if ((file_info->data || file_info->data_owner) &&
           !file_info->persistent_data)
       {
-         free((void*)file_info->data);
+         if (file_info->data_release)
+         {
+            file_info->data_release(file_info->data_owner);
+            /* ROMX-owned buffers/mappings must not remain visible after
+             * their owner has been released.  Preserve the upstream
+             * behaviour for ordinary malloc-backed content, where these
+             * fields were historically left untouched. */
+            file_list->game_info[i].data = NULL;
+            file_list->game_info[i].size = 0;
+            file_list->game_info_ext[i].data = NULL;
+            file_list->game_info_ext[i].size = 0;
+         }
+         else
+            free((void*)file_info->data);
 
          file_info->data      = NULL;
          file_info->data_size = 0;
+         file_info->data_owner = NULL;
+         file_info->data_release = NULL;
       }
    }
 }
@@ -355,11 +374,16 @@ static void content_file_list_free_entry(
       file_info->meta = NULL;
    }
 
-   if (file_info->data)
+   if (file_info->data || file_info->data_owner)
    {
-      free((void*)file_info->data);
+      if (file_info->data_release)
+         file_info->data_release(file_info->data_owner);
+      else if (file_info->data)
+         free((void*)file_info->data);
       file_info->data = NULL;
    }
+   file_info->data_owner       = NULL;
+   file_info->data_release     = NULL;
    file_info->data_size       = 0;
 
    file_info->file_in_archive = false;
@@ -523,6 +547,8 @@ static bool content_file_list_set_info(
       return false;
 
    file_info->data            = data;
+   file_info->data_owner      = data;
+   file_info->data_release    = NULL;
    file_info->data_size       = data_size;
    file_info->persistent_data = persistent_data;
 
@@ -1392,8 +1418,14 @@ static bool content_file_load(
    for (i = 0; i < content->size; i++)
    {
       const char *content_path = NULL;
+      const char *core_content_path = NULL;
       uint8_t *content_data    = NULL;
       size_t content_size      = 0;
+#ifdef HAVE_ROMX
+      romx_frontend_content_t *romx_content = NULL;
+      romx_frontend_open_result_t romx_result;
+      char romx_error[256];
+#endif
       const char *valid_exts   = special
             ? special->roms[i].valid_extensions
             : content_ctx->valid_extensions;
@@ -1415,6 +1447,26 @@ static bool content_file_load(
       }
       else
       {
+#ifdef HAVE_ROMX
+         romx_error[0] = '\0';
+         romx_result = romx_frontend_content_open(content_path,
+               &romx_content, romx_error, sizeof(romx_error));
+         if (romx_result == ROMX_FRONTEND_OPEN_INVALID)
+         {
+            char message[512];
+            snprintf(message, sizeof(message),
+                  "Invalid ROMX container: %s",
+                  romx_error[0] ? romx_error : "structural validation failed");
+            *err_string = strdup(message);
+            *error_enum = MSG_FAILED_TO_LOAD_CONTENT;
+            return false;
+         }
+         core_content_path = romx_content
+               ? romx_frontend_content_logical_path(romx_content)
+               : content_path;
+#else
+         core_content_path = content_path;
+#endif
          /* If this is the first item of content,
           * get content type */
          if (i == 0)
@@ -1423,7 +1475,27 @@ static bool content_file_load(
          /* Apply any file-type-specific content
           * handling overrides */
          if (p_content->content_override_list)
-            content_file_apply_overrides(p_content, content, i, content_path);
+            content_file_apply_overrides(p_content, content, i, core_content_path);
+
+#ifdef HAVE_ROMX
+         /* A need_fullpath core must receive a stable virtual path that the
+          * frontend VFS can route to the bounded ROMX payload. The memory
+          * path keeps the existing physical#member identity. */
+         if (romx_content &&
+             ((content->elems[i].attr.i & BLCK_NEED_FULLPATH) != 0))
+         {
+            core_content_path = romx_frontend_content_vfs_path(romx_content);
+            if (!romx_frontend_content_vfs_activate(romx_content))
+            {
+               const char *message =
+                     "Another ROMX VFS content object is already active.";
+               *err_string = strdup(message);
+               romx_frontend_content_free(romx_content);
+               *error_enum = MSG_FAILED_TO_LOAD_CONTENT;
+               return false;
+            }
+         }
+#endif
 
          /* If core does not require 'fullpath', load
           * the content into memory */
@@ -1432,10 +1504,35 @@ static bool content_file_load(
          if (!((content->elems[i].attr.i & BLCK_NEED_FULLPATH) != 0))
          {
             content_data = NULL;
+#ifdef HAVE_ROMX
+            if (romx_content)
+            {
+               const void *mapped_data = NULL;
+               if (!romx_frontend_content_map_payload(romx_content,
+                        &mapped_data, &content_size,
+                        romx_error, sizeof(romx_error)))
+               {
+                  char message[512];
+                  snprintf(message, sizeof(message),
+                        "Failed to map ROMX payload: %s",
+                        romx_error[0] ? romx_error : "unknown mapping error");
+                  *err_string = strdup(message);
+                  romx_frontend_content_free(romx_content);
+                  *error_enum = MSG_FAILED_TO_LOAD_CONTENT;
+                  return false;
+               }
+               content_data = (uint8_t*)mapped_data;
+               RARCH_LOG("[ROMX] Mapped payload from \"%s\" (%llu bytes).\n",
+                     content_path,
+                     (unsigned long long)romx_frontend_content_payload_size(
+                           romx_content));
+            }
+            else
+#endif
             if ((content_size = content_file_load_into_memory(
-                  content_ctx, p_content, content_path,
-                  content_compressed, i, first_content_type,
-                  &content_data)) == 0)
+                     content_ctx, p_content, content_path,
+                     content_compressed, i, first_content_type,
+                     &content_data)) == 0)
             {
                char msg[PATH_MAX_LENGTH];
                snprintf(msg, sizeof(msg), "%s: \"%s\".\n",
@@ -1548,15 +1645,37 @@ static bool content_file_load(
       /* Add current entry to content file list */
       if (!content_file_list_set_info(
             p_content->content_list,
-            content_path, content_data, content_size,
+            core_content_path, content_data, content_size,
             ((content->elems[i].attr.i & BLCK_PERSISTENT) != 0), i))
       {
          RARCH_LOG("[Content] Failed to process content file: \"%s\".\n", content_path);
+#ifdef HAVE_ROMX
+         if (romx_content)
+            romx_frontend_content_free(romx_content);
+         else
+#endif
          if (content_data)
             free((void*)content_data);
          *error_enum = MSG_FAILED_TO_LOAD_CONTENT;
          return false;
       }
+#ifdef HAVE_ROMX
+      if (romx_content)
+      {
+         content_file_info_t *file_info =
+               &p_content->content_list->entries[i];
+         file_info->data_owner   = romx_content;
+         file_info->data_release = romx_frontend_content_free;
+         if ((content->elems[i].attr.i & BLCK_NEED_FULLPATH) != 0)
+         {
+            /* VFS handles are opened lazily by the core, so keep the ROMX
+             * reader registration alive until content_deinit(). */
+            file_info->persistent_data = true;
+            p_content->content_list->game_info_ext[i].persistent_data = true;
+         }
+         romx_content             = NULL;
+      }
+#endif
    }
 
    /* Load content into core */

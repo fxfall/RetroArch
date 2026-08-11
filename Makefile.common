@@ -109,6 +109,15 @@ endif
 
 INCLUDE_DIRS += -I$(LIBRETRO_COMM_DIR)/include -I$(DEPS_DIR)
 
+ifeq ($(HAVE_ROMX), 1)
+   DEFINES     += -DHAVE_ROMX
+   DEF_FLAGS   += $(ROMX_CFLAGS)
+   LIBS        += $(ROMX_LIBS)
+   OBJ         += romx_frontend.o
+   OBJ         += romx_ra_vfs.o
+   OBJ         += romx_ra_scan.o
+endif
+
 # Switches
 #
 ifeq ($(HAVE_NETPLAYDISCOVERY), 1)

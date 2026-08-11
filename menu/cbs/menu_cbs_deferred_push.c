@@ -37,6 +37,10 @@
 #include "../../verbosity.h"
 #include "../../msg_hash_lbl_str.h"
 
+#ifdef HAVE_ROMX
+#include "../../romx_frontend.h"
+#endif
+
 enum
 {
    PUSH_ARCHIVE_OPEN_DETECT_CORE = 0,
@@ -514,6 +518,9 @@ static int general_push(menu_displaylist_info_t *info,
 
    if (*ext_filter)
    {
+#ifdef HAVE_ROMX
+      romx_frontend_append_extension_aliases(ext_filter, 2048);
+#endif
       if (info->exts)
          free(info->exts);
       info->exts = strdup(ext_filter);

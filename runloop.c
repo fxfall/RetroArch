@@ -111,6 +111,9 @@
 
 #include "runtime_file.h"
 #include "runloop.h"
+#ifdef HAVE_ROMX
+#include "romx_ra_vfs.h"
+#endif
 #include "camera/camera_driver.h"
 #include "location_driver.h"
 #include "record/record_driver.h"
@@ -3148,6 +3151,17 @@ bool runloop_environment_cb(unsigned cmd, void *data)
          static struct retro_vfs_interface vfs_iface =
          {
             /* VFS API v1 */
+#ifdef HAVE_ROMX
+            romx_ra_vfs_get_path,
+            romx_ra_vfs_open,
+            romx_ra_vfs_close,
+            romx_ra_vfs_size,
+            romx_ra_vfs_tell,
+            romx_ra_vfs_seek,
+            romx_ra_vfs_read,
+            romx_ra_vfs_write,
+            romx_ra_vfs_flush,
+#else
             retro_vfs_file_get_path_impl,
             retro_vfs_file_open_impl,
             retro_vfs_file_close_impl,
@@ -3157,12 +3171,21 @@ bool runloop_environment_cb(unsigned cmd, void *data)
             retro_vfs_file_read_impl,
             retro_vfs_file_write_impl,
             retro_vfs_file_flush_impl,
+#endif
             retro_vfs_file_remove_impl,
             retro_vfs_file_rename_impl,
             /* VFS API v2 */
+#ifdef HAVE_ROMX
+            romx_ra_vfs_truncate,
+#else
             retro_vfs_file_truncate_impl,
+#endif
             /* VFS API v3 */
+#ifdef HAVE_ROMX
+            romx_ra_vfs_stat,
+#else
             retro_vfs_stat_impl,
+#endif
             retro_vfs_mkdir_impl,
             retro_vfs_opendir_impl,
             retro_vfs_readdir_impl,
@@ -3170,7 +3193,11 @@ bool runloop_environment_cb(unsigned cmd, void *data)
             retro_vfs_dirent_is_dir_impl,
             retro_vfs_closedir_impl,
              /* VFS API v4 */
+#ifdef HAVE_ROMX
+            romx_ra_vfs_stat_64,
+#else
             retro_vfs_stat_64_impl,
+#endif
          };
 
          struct retro_vfs_interface_info *vfs_iface_info = (struct retro_vfs_interface_info *) data;

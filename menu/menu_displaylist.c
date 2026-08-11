@@ -105,6 +105,10 @@
 #include "../file_path_special.h"
 #include "../defaults.h"
 #include "../verbosity.h"
+
+#ifdef HAVE_ROMX
+#include "../romx_frontend.h"
+#endif
 #include "../version.h"
 #ifdef HAVE_CHEATS
 #include "../cheat_manager.h"
@@ -480,6 +484,18 @@ static int filebrowser_parse(
       count++;
       menu_entries_append(info_list, file_path, "",
             enum_idx, file_type, 0, 0, NULL);
+#ifdef HAVE_ROMX
+      if (!path_is_compressed && romx_frontend_path_is_candidate(file_path))
+      {
+         romx_frontend_metadata_t romx_metadata;
+         const char *romx_path = str_list.elems[i].data;
+
+         if (romx_frontend_read_metadata(romx_path, &romx_metadata)
+             && *romx_metadata.name && info_list->size > 0)
+            file_list_set_alt_at_offset(info_list,
+                  info_list->size - 1, romx_metadata.name);
+      }
+#endif
    }
 
    dir_list_deinitialize(&str_list);

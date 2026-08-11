@@ -47,6 +47,11 @@
 #include "../verbosity.h"
 #include "task_database_cue.h"
 
+#ifdef HAVE_ROMX
+#include "../romx_frontend.h"
+#include "../romx_ra_scan.h"
+#endif
+
 /* Scan result structure for accumulating identification results */
 typedef struct scan_result
 {
@@ -826,6 +831,19 @@ static int task_database_iterate_playlist(
       database_state_handle_t *db_state,
       database_info_handle_t *db, const char *name)
 {
+#ifdef HAVE_ROMX
+   romx_frontend_metadata_t romx_metadata;
+   if (romx_frontend_read_metadata(name, &romx_metadata))
+   {
+      db_state->crc  = romx_metadata.crc32;
+      db_state->size = romx_metadata.payload_size;
+      db->type       = DATABASE_TYPE_CRC_LOOKUP;
+      RARCH_LOG("[ROMX] Using metadata CRC32 %08lX and payload size %llu for database lookup.\n",
+            (unsigned long)db_state->crc,
+            (unsigned long long)db_state->size);
+      return 1;
+   }
+#endif
    switch (extension_to_file_type(path_get_extension(name)))
    {
       case FILE_TYPE_COMPRESSED:
@@ -956,6 +974,37 @@ static bool add_files_from_archive(manual_scan_handle_t *_db,
    }
    return archive_added;
 }
+#ifdef HAVE_ROMX
+/* A normal database scan drops a file after the last RDB misses.  ROMX
+ * carries its own lookup CRC and display metadata, so retain it as a
+ * playlist result even when no official database entry exists. */
+static bool task_database_add_romx_result(
+      manual_scan_handle_t *manual_scan, const char *path)
+{
+   char label[NAME_MAX_LENGTH];
+   char crc[32];
+   char playlist_name[NAME_MAX_LENGTH];
+
+   if (!manual_scan || !manual_scan->task_config || !path
+       || !romx_ra_scan_build_result(path,
+            manual_scan->task_config->database_name,
+            manual_scan->task_config->playlist_file,
+            manual_scan->task_config->dat_file_path,
+            manual_scan->task_config->content_dir,
+            label, sizeof(label), crc, sizeof(crc),
+            playlist_name, sizeof(playlist_name)))
+      return false;
+
+   if (!scan_results_add(&manual_scan->scan_results,
+            path, label, crc, playlist_name, NULL))
+      return false;
+
+   RARCH_LOG("[ROMX] Added content \"%s\" as \"%s\" to \"%s\" with metadata CRC32 %s.\n",
+         path, label, playlist_name, crc);
+   return true;
+}
+#endif
+
 #ifdef HAVE_LIBRETRODB
 static enum scan_verdict database_info_list_iterate_end_no_match(
       manual_scan_handle_t *_db,
@@ -965,12 +1014,7 @@ static enum scan_verdict database_info_list_iterate_end_no_match(
       bool path_contains_compressed_file)
 {
    bool archive_added = false;
-   /* Reached end of database list,
-    * CRC match probably didn't succeed. */
-   if (retroarch_override_setting_is_set(
-       RARCH_OVERRIDE_SETTING_DATABASE_SCAN, NULL))
-      task_database_scan_console_output(path, NULL, false);
-
+   bool romx_added    = false;
    /* If this was a compressed file and no match in the database
     * list was found then expand the search list to include the
     * archive's contents. */
@@ -978,9 +1022,20 @@ static enum scan_verdict database_info_list_iterate_end_no_match(
    {
       archive_added=add_files_from_archive(_db, path);
    }
-   else
+#ifdef HAVE_ROMX
+   else if (!path_contains_compressed_file)
+      romx_added = task_database_add_romx_result(_db, path);
+#endif
+   /* Preserve the upstream no-match output for ordinary files and archive
+    * expansion.  Only a successfully retained ROMX result suppresses it. */
+   if (!romx_added)
+   {
+      if (retroarch_override_setting_is_set(
+          RARCH_OVERRIDE_SETTING_DATABASE_SCAN, NULL))
+         task_database_scan_console_output(path, NULL, false);
       RARCH_LOG("[Scanner] No match for: \"%s\" (%s %08X).\n", path,
                 db_state->serial, db_state->crc);
+   }
 
    db_state->list_index   = 0;
    db_state->entry_index  = 0;
@@ -994,7 +1049,11 @@ static enum scan_verdict database_info_list_iterate_end_no_match(
    if (db_state->archive_crc != 0)
       db_state->archive_crc = 0;
 
-   return archive_added ? SCAN_VERDICT_ARCHIVE_CONTENTS_ADDED : SCAN_VERDICT_NO_DB_MATCH;
+   if (archive_added)
+      return SCAN_VERDICT_ARCHIVE_CONTENTS_ADDED;
+   if (romx_added)
+      return SCAN_VERDICT_MATCHED_DB;
+   return SCAN_VERDICT_NO_DB_MATCH;
 }
 
 static int database_info_list_iterate_new(
@@ -2095,6 +2154,14 @@ static void scan_results_batch_update_playlists(scan_results_t *sr,
          playlist_push(playlist, &entry);
          added_count++;
 
+#ifdef HAVE_ROMX
+         /* playlist_push() inserts new entries at index zero and moves an
+          * existing matching entry there as well.  Resolve the standard
+          * Named_Boxarts path only after the LPL entry exists, so its final
+          * label/database name controls the destination. */
+         romx_ra_scan_extract_cover(playlist, 0);
+#endif
+
          RARCH_LOG("[Scanner] Add \"%s / %s\".\n", db_name_noext, result->entry_label);
 
          if (retroarch_override_setting_is_set(RARCH_OVERRIDE_SETTING_DATABASE_SCAN, NULL))
@@ -2785,6 +2852,9 @@ static void task_manual_content_scan_handler(retro_task_t *task)
                   manual_scan->content_list_index].data;
             int content_type         = manual_scan->content_list->elems[
                   manual_scan->content_list_index].attr.i;
+#ifdef HAVE_ROMX
+            bool romx_added          = false;
+#endif
 
             if (content_path && *content_path)
             {
@@ -2812,12 +2882,24 @@ static void task_manual_content_scan_handler(retro_task_t *task)
                      (manual_scan->content_list_index * 100) /
                      manual_scan->content_list->size);
 
+#ifdef HAVE_ROMX
+               /* Manual scans that do not use an RDB normally assign a
+                * zero CRC and a filename label.  ROMX already carries the
+                * authoritative lookup CRC and embedded display name. */
+               romx_added = task_database_add_romx_result(
+                     manual_scan, content_path);
+#endif
+
                /* If "search archives" is enabled, but compressed files are not in the list,    *
                 * do not add the compressed file itself, just add the contents to the end.      *
                 * This can also conflict with DAT scanning which looks for zip files typically, *
                 * so it is restricted for the full-manual scan case. DB match does its own      *
                 * archive addition. */
-               if (manual_scan->task_config->search_archives &&
+               if (
+#ifdef HAVE_ROMX
+                   !romx_added &&
+#endif
+                   manual_scan->task_config->search_archives &&
                    path_is_compressed_file(content_path) && 
                    ((*manual_scan->task_config->file_exts
                    && string_find_index_substring_string(manual_scan->task_config->file_exts,path_get_extension(content_file)) < 0)
@@ -2825,7 +2907,11 @@ static void task_manual_content_scan_handler(retro_task_t *task)
                {
                   add_files_from_archive(manual_scan,content_path);
                }
+#ifdef HAVE_ROMX
+               else if (!romx_added)
+#else
                else
+#endif
                {
                   /* Add content to playlist */
                   /* Get 'actual' content path */
@@ -2951,6 +3037,9 @@ static void task_manual_content_scan_handler(retro_task_t *task)
             /* Update progress display */
 #ifdef HAVE_LIBRETRODB
             if (dbstate && dbstate->list && dbstate->list->size == 0 &&
+#ifdef HAVE_ROMX
+                manual_scan->scan_results.count == 0 &&
+#endif
                 (manual_scan->task_config->db_usage == MANUAL_CONTENT_SCAN_USE_DB_LOOSE ||
                  manual_scan->task_config->db_usage == MANUAL_CONTENT_SCAN_USE_DB_STRICT))
             {

@@ -326,6 +326,8 @@ typedef struct content_file_info
    char *ext;
    char *meta; /* Unused at present */
    void *data;
+   void *data_owner;
+   void (*data_release)(void *owner);
    size_t data_size;
    bool file_in_archive;
    bool persistent_data;

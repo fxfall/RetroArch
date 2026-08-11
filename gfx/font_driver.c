@@ -41,6 +41,21 @@ static uint32_t font_driver_generation = 0;
  * should change. Singly linked through font_data_t::next. */
 static font_data_t *font_live = NULL;
 
+/* The language packs normally provide this file.  macOS builds without
+ * the external asset bundle can use the system CJK font instead; keep
+ * this exception narrow so an unrelated missing explicit font path is
+ * not silently replaced. */
+static bool font_path_is_macos_chinese_fallback(const char *path)
+{
+#if defined(__APPLE__)
+   return path && (string_is_equal(path, "chinese-fallback-font.ttf")
+         || string_ends_with(path, "/chinese-fallback-font.ttf"));
+#else
+   (void)path;
+   return false;
+#endif
+}
+
 static void font_driver_release_renderer_state(
       const font_renderer_t *renderer, void *renderer_data,
       bool is_threaded);
@@ -212,9 +227,16 @@ int font_renderer_create_default(
    for (i = 0; font_backends[i]; i++)
    {
       const char *path      = font_path;
+      bool         use_defaults = !font_path || !*font_path;
       uint8_t    *data      = NULL;
       int64_t     len       = 0;
       unsigned    face      = 0;
+
+      if (font_path_is_macos_chinese_fallback(font_path))
+      {
+         path         = NULL;
+         use_defaults = true;
+      }
 
       /* Ask the renderer where to look. It gets the requested path so
        * it can resolve against it - freetype hands it to fontconfig,
@@ -224,7 +246,8 @@ int font_renderer_create_default(
        * of the renderers entirely. */
       {
          const char * const *cand = font_backends[i]->get_default_fonts
-            ? font_backends[i]->get_default_fonts(font_path, &face)
+            ? font_backends[i]->get_default_fonts(
+                  use_defaults ? NULL : font_path, &face)
             : NULL;
 
          for (; cand && *cand; cand++)
@@ -240,7 +263,7 @@ int font_renderer_create_default(
 
          /* Nothing asked for and nothing offered: this backend has
           * nothing to work with. */
-         if (!path)
+         if (!path && !use_defaults)
             continue;
       }
 

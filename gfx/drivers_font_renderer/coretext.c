@@ -635,18 +635,24 @@ error:
 static const char * const *font_renderer_ct_get_default_fonts(
       const char *requested, unsigned *face_index)
 {
-   /* A name rather than a path: CoreText looks fonts up by name, and
-    * there is no way to know one is present without initialising it.
-    * font_renderer_create_default() will not find this on disk, which
-    * matches the previous behaviour - init() rejected it too. */
-   static const char * const names[] = { "Verdana", NULL };
+   /* font_renderer_create_default() resolves the candidates before
+    * handing the bytes to CoreText.  Keep the default on a real font
+    * file: the old "Verdana" family name was treated as a path by the
+    * byte-based loader, failed to read, and silently fell back to the
+    * STB built-in Latin-only glyphs.  Arial Unicode is present on
+    * macOS and covers the CJK characters used by ROM titles. */
+   static const char * const paths[] = {
+      "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+      "/Library/Fonts/Arial Unicode.ttf",
+      NULL
+   };
 
    (void)face_index;
 
    /* An explicit request wins; this is only the no-path default. */
    if (requested && *requested)
       return NULL;
-   return names;
+   return paths;
 }
 
 static void font_renderer_ct_get_line_metrics(

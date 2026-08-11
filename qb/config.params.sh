@@ -113,6 +113,7 @@ HAVE_VG=auto               # OpenVG support
 HAVE_CG=auto               # Cg shader support
 HAVE_HLSL=no               # HLSL9 shader support (for Direct3D9)
 HAVE_ZLIB=no               # zlib support (uses the built-in DEFLATE codec when disabled)
+HAVE_ROMX=auto             # ROMX container frontend support via libromx
 HAVE_ALSA=auto             # ALSA support
 C89_ALSA=no
 HAVE_RPILED=auto           # RPI led support

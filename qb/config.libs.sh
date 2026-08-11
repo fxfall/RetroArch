@@ -720,6 +720,7 @@ fi
 
 # strcasestr: not probed - compat_strcasestr is used by name on every
 # platform, so whether the C library has one is irrelevant.
+check_lib '' ROMX -lromx romx_reader_open_path '' '#include <romx/romx.h>'
 check_lib '' MMAP "$CLIB" mmap
 check_lib '' MEMFD_CREATE "$CLIB" memfd_create
 

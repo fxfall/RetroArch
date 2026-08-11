@@ -39,6 +39,10 @@
 #include "core_info.h"
 #include "file_path_special.h"
 
+#ifdef HAVE_ROMX
+#include "romx_frontend.h"
+#endif
+
 #if defined(__WINRT__) || defined(WINAPI_FAMILY) && WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP
 #include "uwp/uwp_func.h"
 #endif
@@ -2071,6 +2075,30 @@ static size_t core_info_list_resolve_all_extensions(
       }
    }
 
+#ifdef HAVE_ROMX
+   /* Directory scanning uses all_ext before any file reaches libromx.
+    * Add the bounded ROMX 0.1.x physical extension set here so scanning
+    * works even when core .info files are absent. */
+   {
+      const char *src = romx_frontend_supported_extensions();
+      const char *end = src + strlen(src);
+      const char *p   = src;
+
+      while (p < end)
+      {
+         const char *tok_end = (const char*)memchr(p, '|', end - p);
+         size_t tok_len;
+         if (!tok_end)
+            tok_end = end;
+         tok_len = tok_end - p;
+         CORE_INFO_EXT_INSERT(p, tok_len, scr->slots,
+               scr->token_buf, token_pos, _TOKEN_BUF,
+               unique_count, total_chars, _HASH_MASK);
+         p = tok_end + 1;
+      }
+   }
+#endif
+
 #ifdef HAVE_7ZIP
    CORE_INFO_EXT_INSERT("7z", STRLEN_CONST("7z"), scr->slots,
          scr->token_buf, token_pos, _TOKEN_BUF, unique_count,
@@ -2420,6 +2448,9 @@ static bool core_info_does_support_file(
       const core_info_t *core, const char *path)
 {
    const char *ext;
+#ifdef HAVE_ROMX
+   char logical_extension[ROMX_FRONTEND_PAYLOAD_FORMAT_MAX];
+#endif
    if (!core || !core->supported_extensions_list)
       return false;
    if (!path || !*path)
@@ -2429,7 +2460,15 @@ static bool core_info_does_support_file(
       return string_list_find_elem(core->supported_extensions_list, "/");
    if (!ext[1])
       return false;
-   return string_list_find_elem(core->supported_extensions_list, ext + 1);
+   if (string_list_find_elem(core->supported_extensions_list, ext + 1))
+      return true;
+#ifdef HAVE_ROMX
+   if (romx_frontend_get_logical_extension(path, logical_extension,
+            sizeof(logical_extension)))
+      return string_list_find_elem(core->supported_extensions_list,
+            logical_extension);
+#endif
+   return false;
 }
 
 /* qsort_r() is not in standard C, sadly. */
@@ -2695,6 +2734,10 @@ void core_info_list_get_supported_cores(core_info_list_t *core_info_list,
 #endif
    core_info_state_t *p_coreinfo = &core_info_st;
    char dir_path[PATH_MAX_LENGTH];
+#ifdef HAVE_ROMX
+   char romx_logical_path[PATH_MAX_LENGTH];
+   romx_frontend_metadata_t romx_metadata;
+#endif
 
    if (!core_info_list)
       return;
@@ -2706,6 +2749,17 @@ void core_info_list_get_supported_cores(core_info_list_t *core_info_list,
       fill_pathname_join_special(dir_path, path, "", sizeof(dir_path));
       path = dir_path;
    }
+
+#ifdef HAVE_ROMX
+   /* Parse the container once before qsort invokes the comparator. */
+   if (romx_frontend_read_metadata(path, &romx_metadata)
+       && *romx_metadata.payload_format)
+   {
+      snprintf(romx_logical_path, sizeof(romx_logical_path),
+            "romx-content.%s", romx_metadata.payload_format);
+      path = romx_logical_path;
+   }
+#endif
 
    p_coreinfo->tmp_path          = path;
 
@@ -2823,6 +2877,16 @@ bool core_info_database_supports_content_path(
    char      *database           = NULL;
    const char      *new_path     = path_basename(database_path);
    core_info_state_t *p_coreinfo = NULL;
+#ifdef HAVE_ROMX
+   char logical_extension[ROMX_FRONTEND_PAYLOAD_FORMAT_MAX];
+   const char *content_extension = path_get_extension(path);
+
+   if (romx_frontend_get_logical_extension(path, logical_extension,
+            sizeof(logical_extension)))
+      content_extension = logical_extension;
+#else
+   const char *content_extension = path_get_extension(path);
+#endif
    if (!new_path || !*new_path)
       return false;
    if (!(database = strdup(new_path)))
@@ -2844,7 +2908,7 @@ bool core_info_database_supports_content_path(
          const core_info_t *info = &p_coreinfo->curr_list->list[i];
 
          if (!string_list_find_elem(info->supported_extensions_list,
-                  path_get_extension(path)))
+                  content_extension))
             continue;
 
          if (!string_list_find_elem(info->databases_list, database))

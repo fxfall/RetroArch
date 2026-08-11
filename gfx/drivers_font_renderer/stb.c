@@ -1739,6 +1739,8 @@ static const char * const *font_renderer_stb_get_default_fonts(
       "C:\\Windows\\Fonts\\consola.ttf",
       "C:\\Windows\\Fonts\\verdana.ttf",
 #elif defined(__APPLE__)
+      "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+      "/Library/Fonts/Arial Unicode.ttf",
       "/Library/Fonts/Microsoft/Candara.ttf",
       "/Library/Fonts/Verdana.ttf",
       "/Library/Fonts/Tahoma.ttf",
