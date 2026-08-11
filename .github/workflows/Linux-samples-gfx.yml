@@ -29,7 +29,7 @@ jobs:
             libx11-dev libxrandr-dev libdrm-dev
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v7
 
       - name: Build and run vulkan_extension_count_test (ASan)
         shell: bash
