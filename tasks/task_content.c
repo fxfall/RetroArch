@@ -109,6 +109,10 @@
 #include "../runloop.h"
 #include "../verbosity.h"
 
+#ifdef HAVE_CONTENT_COMPONENTS
+#include "../content_component.h"
+#endif
+
 #ifdef HAVE_PRESENCE
 #include "../network/presence.h"
 #endif
@@ -1275,8 +1279,21 @@ static void content_file_get_path(
 #ifdef HAVE_COMPRESSION
    /* Check whether we are dealing with a
     * compressed file */
-   path_is_archive        = path_is_compressed_file(content_path);
-   path_is_inside_archive = path_contains_compressed_file(content_path);
+   /* Component containers are not RetroArch archives. Keep them out of
+    * archive rewriting/extraction if a backend recognises their suffix. */
+   path_is_archive        = false;
+   path_is_inside_archive = false;
+   if (
+#ifdef HAVE_CONTENT_COMPONENTS
+       !content_component_path_supported(content_path)
+#else
+       true
+#endif
+      )
+   {
+      path_is_archive        = path_is_compressed_file(content_path);
+      path_is_inside_archive = path_contains_compressed_file(content_path);
+   }
    *path_is_compressed    = path_is_archive || path_is_inside_archive;
 
    /* If extraction is permitted and content is a
@@ -1384,20 +1401,34 @@ static bool content_file_load(
    size_t i;
    retro_ctx_load_content_info_t load_info;
    bool used_vfs_fallback_copy                = false;
-#ifdef __WINRT__
+#if defined(__WINRT__) || defined(HAVE_CONTENT_COMPONENTS)
    rarch_system_info_t *sys_info              = &runloop_state_get_ptr()->system;
 #endif
    enum rarch_content_type first_content_type = RARCH_CONTENT_NONE;
+#ifdef HAVE_CONTENT_COMPONENTS
+   char component_title[RARCH_COMPONENT_TITLE_CAPACITY + 1];
+   bool component_title_pending = false;
+   bool component_content_present = false;
+   bool component_multifile_present = false;
+   rarch_content_component_session_t *component_session = NULL;
+   component_title[0] = '\0';
+#endif
 
    for (i = 0; i < content->size; i++)
    {
       const char *content_path = NULL;
+      const char *core_content_path = NULL;
       uint8_t *content_data    = NULL;
       size_t content_size      = 0;
       const char *valid_exts   = special
             ? special->roms[i].valid_extensions
             : content_ctx->valid_extensions;
       bool content_compressed  = false;
+#ifdef HAVE_CONTENT_COMPONENTS
+      rarch_content_component_session_t *item_component_session = NULL;
+      rarch_component_content_view_v1_t component_view = {0};
+      char component_error[256];
+#endif
 
       /* Get content path */
       content_file_get_path(content, i, valid_exts,
@@ -1410,20 +1441,131 @@ static bool content_file_load(
          if ((content->elems[i].attr.i & BLCK_REQUIRED) != 0)
          {
             *error_enum = MSG_ERROR_LIBRETRO_CORE_REQUIRES_CONTENT;
+#ifdef HAVE_CONTENT_COMPONENTS
+            content_component_abort_pending();
+#endif
             return false;
          }
       }
       else
       {
+#ifdef HAVE_CONTENT_COMPONENTS
+         component_error[0] = '\0';
+         if (content_component_path_supported(content_path))
+         {
+            if (!content_component_session_open(content_path,
+                     &item_component_session, component_error,
+                     sizeof(component_error)))
+            {
+               char message[512];
+               snprintf(message, sizeof(message),
+                     "Invalid content container: %s",
+                     component_error[0] ? component_error :
+                        "structural validation failed");
+               *err_string = strdup(message);
+               *error_enum = MSG_FAILED_TO_LOAD_CONTENT;
+               content_component_abort_pending();
+               return false;
+            }
+            component_session = item_component_session;
+            core_content_path =
+               content_component_session_logical_path(item_component_session);
+
+            /* The frontend recognises the outer container, but the selected
+             * core must advertise the logical format of its entrypoint.
+             * Reject a mismatch before any payload mapping or VFS activation
+             * so the user sees a useful compatibility error. */
+            {
+               rarch_component_info_v1_t component_info =
+                  RARCH_COMPONENT_INFO_V1_INIT;
+               if (!content_component_session_get_info(item_component_session,
+                        &component_info) ||
+                   !content_component_core_supports_extension(valid_exts,
+                        component_info.entrypoint_extension))
+               {
+                  char message[512];
+                  const char *extension =
+                     component_info.entrypoint_extension[0]
+                     ? component_info.entrypoint_extension : "unknown";
+                  snprintf(message, sizeof(message),
+                        "The selected core does not support the container entrypoint format '.%s'. Choose a core that advertises this format.",
+                        extension);
+                  *err_string = strdup(message);
+                  *error_enum = MSG_FAILED_TO_LOAD_CONTENT;
+                  content_component_abort_pending();
+                  return false;
+               }
+               /* Direct file launches may not have a playlist label yet.
+                * Defer publishing the metadata title until core_load_game()
+                * succeeds, so a failed component launch leaves the label
+                * exactly as it was. */
+               if (!runloop_state_get_ptr()->name.label[0] &&
+                   component_info.title[0])
+               {
+                  strlcpy(component_title, component_info.title,
+                        sizeof(component_title));
+                  component_title_pending = true;
+               }
+            }
+         }
+#endif
+         if (!core_content_path)
+            core_content_path = content_path;
+
          /* If this is the first item of content,
           * get content type */
          if (i == 0)
-            first_content_type = path_is_media_type(content_path);
+            first_content_type = path_is_media_type(core_content_path);
 
          /* Apply any file-type-specific content
           * handling overrides */
          if (p_content->content_override_list)
-            content_file_apply_overrides(p_content, content, i, content_path);
+            content_file_apply_overrides(p_content, content, i,
+                  core_content_path);
+
+#ifdef HAVE_CONTENT_COMPONENTS
+         if (item_component_session)
+         {
+            rarch_core_contract_v1_t contract = {
+               sizeof(contract),
+               (content->elems[i].attr.i & BLCK_NEED_FULLPATH) != 0,
+               sys_info->supports_vfs,
+               { 0, 0 },
+               valid_exts,
+               content_ctx->directory_cache
+            };
+            component_view.struct_size = sizeof(component_view);
+            if (!content_component_session_prepare(item_component_session,
+                     &contract, &component_view, component_error,
+                     sizeof(component_error)))
+            {
+               char message[640];
+               bool vfs_required = component_view.is_multifile &&
+                  !sys_info->supports_vfs;
+               snprintf(message, sizeof(message),
+                     "Failed to prepare component content: %s",
+                     component_error[0] ? component_error :
+                        "launch adapter failed");
+               *err_string = strdup(message);
+               *error_enum = vfs_required
+                  ? MSG_ERROR_LIBRETRO_CORE_REQUIRES_VFS
+                  : MSG_FAILED_TO_LOAD_CONTENT;
+               content_component_abort_pending();
+               return false;
+            }
+            core_content_path = component_view.core_path;
+            if (!core_content_path || !*core_content_path)
+            {
+               *err_string = strdup(
+                     "Component preparation produced no core-facing entrypoint path.");
+               *error_enum = MSG_FAILED_TO_LOAD_CONTENT;
+               content_component_abort_pending();
+               return false;
+            }
+            component_content_present = true;
+            component_multifile_present |= component_view.is_multifile;
+         }
+#endif
 
          /* If core does not require 'fullpath', load
           * the content into memory */
@@ -1431,6 +1573,18 @@ static bool content_file_load(
          /* Doesn't need fullpath? */
          if (!((content->elems[i].attr.i & BLCK_NEED_FULLPATH) != 0))
          {
+#ifdef HAVE_CONTENT_COMPONENTS
+            if (item_component_session)
+            {
+               /* The mapping/buffer remains owned by the component session. It is
+                * bound to retro_game_info only after set_info() has created
+                * the ordinary RetroArch path fields. */
+               content_data = NULL;
+               content_size = 0;
+            }
+            else
+#endif
+            {
             content_data = NULL;
             if ((content_size = content_file_load_into_memory(
                   content_ctx, p_content, content_path,
@@ -1442,11 +1596,25 @@ static bool content_file_load(
                      msg_hash_to_str(MSG_COULD_NOT_READ_CONTENT_FILE),
                      content_path);
                *err_string = strdup(msg);
+#ifdef HAVE_CONTENT_COMPONENTS
+               content_component_abort_pending();
+#endif
                return false;
+            }
             }
          }
          else
          {
+#ifdef HAVE_CONTENT_COMPONENTS
+            if (item_component_session)
+            {
+               content_path = core_content_path;
+               RARCH_LOG("[Component] Core-facing entrypoint: %s\n",
+                     content_path);
+            }
+            else
+#endif
+            {
 #ifdef HAVE_COMPRESSION
             /* If this is compressed content and need_fullpath
              * is true, extract it to a temporary file */
@@ -1454,7 +1622,14 @@ static bool content_file_load(
                 && !((content->elems[i].attr.i & BLCK_BLOCK_EXTRACT) != 0)
                 && !content_file_extract_from_archive(content_ctx, p_content,
                      valid_exts, &content_path, err_string))
+#ifdef HAVE_CONTENT_COMPONENTS
+            {
+               content_component_abort_pending();
                return false;
+            }
+#else
+               return false;
+#endif
 #endif
 #ifdef __WINRT__
             /* TODO: When support for the 'actual' VFS is added,
@@ -1523,6 +1698,9 @@ static bool content_file_load(
                         msg_hash_to_str(MSG_COULD_NOT_READ_CONTENT_FILE),
                         content_path);
                      *err_string = strdup(msg);
+#ifdef HAVE_CONTENT_COMPONENTS
+                     content_component_abort_pending();
+#endif
                      return false;
                   }
 
@@ -1542,22 +1720,91 @@ static bool content_file_load(
             if (i == 0)
             {
             }
+            }
          }
       }
 
       /* Add current entry to content file list */
       if (!content_file_list_set_info(
             p_content->content_list,
-            content_path, content_data, content_size,
+            core_content_path ? core_content_path : content_path,
+            content_data, content_size,
             ((content->elems[i].attr.i & BLCK_PERSISTENT) != 0), i))
       {
          RARCH_LOG("[Content] Failed to process content file: \"%s\".\n", content_path);
+#ifdef HAVE_CONTENT_COMPONENTS
+         if (item_component_session)
+            content_component_abort_pending();
+         else if (content_data)
+            free((void*)content_data);
+#else
          if (content_data)
             free((void*)content_data);
+#endif
          *error_enum = MSG_FAILED_TO_LOAD_CONTENT;
+#ifdef HAVE_CONTENT_COMPONENTS
+         content_component_abort_pending();
+#endif
+         return false;
+      }
+#ifdef HAVE_CONTENT_COMPONENTS
+      if (item_component_session)
+      {
+         struct retro_game_info *game_info =
+            &p_content->content_list->game_info[i];
+         struct retro_game_info_ext *game_info_ext =
+            &p_content->content_list->game_info_ext[i];
+         bool component_need_fullpath =
+            (content->elems[i].attr.i & BLCK_NEED_FULLPATH) != 0;
+
+         /* Keep session-owned storage out of content_file_info_t: that
+          * structure unconditionally frees data with free(). */
+         /* Preserve RetroArch's need_fullpath contract: a path-oriented core
+          * receives the virtual/materialised path and must not be tempted to
+          * bypass it by consuming a non-NULL data pointer.  The mapping still
+          * remains available to the component VFS entrypoint when used. */
+         game_info->data = component_need_fullpath ? NULL : component_view.data;
+         game_info->size = component_need_fullpath ? 0 :
+            (size_t)component_view.data_size;
+         game_info_ext->data = game_info->data;
+         game_info_ext->size = game_info->size;
+         game_info_ext->persistent_data = !component_need_fullpath &&
+            component_view.data != NULL;
+
+         /* Keep validated metadata owned by the component session,
+          * while exposing it through the existing libretro metadata fields.
+          * Do not put this pointer in content_file_info_t: that structure
+          * owns/free()s its meta member, whereas the session must keep the
+          * JSON alive for the whole core lifetime. */
+         if (component_view.metadata && component_view.metadata_size)
+         {
+            game_info->meta     = component_view.metadata;
+            game_info_ext->meta = component_view.metadata;
+         }
+      }
+#endif
+   }
+
+#ifdef HAVE_CONTENT_COMPONENTS
+   if (component_session)
+   {
+      char component_error[512];
+      component_error[0] = '\0';
+      if (!content_component_session_stage(component_session,
+               component_error, sizeof(component_error)))
+      {
+         char message[768];
+         snprintf(message, sizeof(message),
+               "Failed to stage component persistence: %s",
+               component_error[0] ? component_error :
+                  "persistence adapter failed");
+         *err_string = strdup(message);
+         *error_enum = MSG_FAILED_TO_LOAD_CONTENT;
+         content_component_abort_pending();
          return false;
       }
    }
+#endif
 
    /* Load content into core */
    load_info.content = content;
@@ -1573,8 +1820,44 @@ static bool content_file_load(
       else
          *error_enum = MSG_FAILED_TO_LOAD_CONTENT;
 
+#ifdef HAVE_CONTENT_COMPONENTS
+      if (component_content_present && err_string && !*err_string)
+      {
+         const char *detail = component_multifile_present
+            ? "The selected core could not load this multi-file component entrypoint. The core must actually use the Libretro VFS."
+            : "The selected core could not load this component entrypoint. Verify that it supports the advertised entrypoint format.";
+         *err_string = strdup(detail);
+      }
+#endif
+
+#ifdef HAVE_CONTENT_COMPONENTS
+      content_component_abort_pending();
+#endif
+
       return false;
    }
+
+#ifdef HAVE_CONTENT_COMPONENTS
+   if (component_session)
+   {
+      char component_error[256];
+      component_error[0] = '\0';
+      if (!content_component_session_commit(component_session,
+               component_error, sizeof(component_error)))
+      {
+         *err_string = strdup(component_error[0] ? component_error :
+               "Failed to commit the content-component session.");
+         *error_enum = MSG_FAILED_TO_LOAD_CONTENT;
+         content_component_abort_pending();
+         return false;
+      }
+   }
+
+   if (component_title_pending &&
+       !runloop_state_get_ptr()->name.label[0])
+      strlcpy(runloop_state_get_ptr()->name.label, component_title,
+            sizeof(runloop_state_get_ptr()->name.label));
+#endif
 
 #ifdef HAVE_CHEEVOS
    if (!special)
@@ -2006,6 +2289,17 @@ static void task_push_to_history_list(
       char tmp[PATH_MAX_LENGTH];
       const char *path_content          = path_get(RARCH_PATH_CONTENT);
       struct retro_system_info *sysinfo = &runloop_st->system.info;
+
+#ifdef HAVE_CONTENT_COMPONENTS
+      /* Core-facing paths may be virtual or private cache files. History
+       * always records the user-selected outer container. */
+      {
+         const char *component_source =
+            content_component_active_source_path();
+         if (component_source && *component_source)
+            path_content = component_source;
+      }
+#endif
 
       if (path_content && *path_content)
       {
@@ -2727,6 +3021,11 @@ static bool task_content_defer_menu_load(content_state_t *p_content,
     * ("foo.zip#rom") is stable and may defer. */
    if (!strncmp(fullpath, "content://", STRLEN_CONST("content://")))
       return false;
+#ifdef HAVE_CONTENT_COMPONENTS
+   /* Components select and bound the core-facing payload themselves. */
+   if (content_component_path_supported(fullpath))
+      return false;
+#endif
    if (       path_is_compressed_file(fullpath)
        && !path_contains_compressed_file(fullpath))
       return false;                /* bare archive: load picks entry */
@@ -3181,6 +3480,9 @@ void content_deinit(void)
 {
    content_state_t *p_content = content_state_get_ptr();
 
+#ifdef HAVE_CONTENT_COMPONENTS
+   content_component_close_all();
+#endif
    content_file_override_free(p_content);
    content_file_list_free(p_content->content_list);
 
@@ -3214,6 +3516,10 @@ bool content_init(void)
    runloop_state_t *runloop_st        = runloop_state_get_ptr();
    settings_t *settings               = config_get_ptr();
 
+#ifdef HAVE_CONTENT_COMPONENTS
+   /* Clear a stale component session before replacing the content list. */
+   content_component_close_all();
+#endif
    content_file_list_free(p_content->content_list);
    p_content->content_list            = NULL;
 

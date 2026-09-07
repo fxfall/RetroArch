@@ -111,6 +111,9 @@
 
 #include "runtime_file.h"
 #include "runloop.h"
+#ifdef HAVE_CONTENT_COMPONENTS
+#include "content_component.h"
+#endif
 #include "camera/camera_driver.h"
 #include "location_driver.h"
 #include "record/record_driver.h"
@@ -3145,7 +3148,7 @@ bool runloop_environment_cb(unsigned cmd, void *data)
       case RETRO_ENVIRONMENT_GET_VFS_INTERFACE:
       {
          const uint32_t supported_vfs_version = 4;
-         static struct retro_vfs_interface vfs_iface =
+         static struct retro_vfs_interface base_vfs_iface =
          {
             /* VFS API v1 */
             retro_vfs_file_get_path_impl,
@@ -3172,6 +3175,13 @@ bool runloop_environment_cb(unsigned cmd, void *data)
              /* VFS API v4 */
             retro_vfs_stat_64_impl,
          };
+         struct retro_vfs_interface *vfs_iface = &base_vfs_iface;
+#ifdef HAVE_CONTENT_COMPONENTS
+         struct retro_vfs_interface *component_vfs =
+            content_component_vfs_interface();
+         if (component_vfs)
+            vfs_iface = component_vfs;
+#endif
 
          struct retro_vfs_interface_info *vfs_iface_info = (struct retro_vfs_interface_info *) data;
          if (vfs_iface_info->required_interface_version <= supported_vfs_version)
@@ -3180,7 +3190,7 @@ bool runloop_environment_cb(unsigned cmd, void *data)
                   vfs_iface_info->required_interface_version, supported_vfs_version);
 
             vfs_iface_info->required_interface_version = supported_vfs_version;
-            vfs_iface_info->iface                      = &vfs_iface;
+            vfs_iface_info->iface                      = vfs_iface;
             sys_info->supports_vfs                     = true;
          }
          else

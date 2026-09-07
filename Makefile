@@ -175,7 +175,7 @@ ifeq ($(HAVE_METAL), 1)
    METALLIB := default.metallib
 endif
 
-all: $(TARGET) $(METALLIB) config.mk
+all: $(TARGET) $(METALLIB) $(ROMX_COMPONENT_TARGET) config.mk
 
 define INFO
 ASFLAGS: $(ASFLAGS)
@@ -233,6 +233,34 @@ SYMBOL_MAP := -Wl,-Map=output.map
 $(TARGET): $(RARCH_OBJ)
 	@$(if $(Q), $(shell echo echo LD $@),)
 	$(Q)$(LINK) -o $@ $(RARCH_OBJ) $(LIBS) $(LDFLAGS) $(LIBRARY_DIRS)
+
+ifeq ($(ROMX_COMPONENT_MODE),dynamic)
+ROMX_COMPONENT_BUILD_DIR := $(OBJDIR)/romx-component
+ROMX_COMPONENT_OBJECTS   := $(addprefix $(ROMX_COMPONENT_BUILD_DIR)/,$(ROMX_COMPONENT_SOURCES:.c=.o))
+
+$(ROMX_COMPONENT_BUILD_DIR)/%.o: %.c config.h config.mk
+	@mkdir -p $(dir $@)
+	@$(if $(Q), $(shell echo echo CC-COMPONENT $<),)
+	$(Q)$(CC) $(CPPFLAGS) $(CFLAGS) $(DEFINES) $(ROMX_CFLAGS) \
+		-DHAVE_ROMX -DRARCH_CONTENT_COMPONENT_BUILD -fPIC -MMD -c -o $@ $<
+
+ifeq ($(OS),Darwin)
+$(ROMX_COMPONENT_TARGET): $(ROMX_COMPONENT_OBJECTS)
+	@mkdir -p $(dir $@)
+	@$(if $(Q), $(shell echo echo LD-COMPONENT $@),)
+	$(Q)$(CC) -dynamiclib -Wl,-undefined,dynamic_lookup \
+		-Wl,-exported_symbol,_rarch_content_component_get_v1 \
+		-o $@ $(ROMX_COMPONENT_OBJECTS) $(ROMX_COMPONENT_LIBS) $(LIBRARY_DIRS)
+else
+$(ROMX_COMPONENT_TARGET): $(ROMX_COMPONENT_OBJECTS) romx/romx_component.exports
+	@mkdir -p $(dir $@)
+	@$(if $(Q), $(shell echo echo LD-COMPONENT $@),)
+	$(Q)$(CC) -shared -Wl,--version-script=romx/romx_component.exports \
+		-o $@ $(ROMX_COMPONENT_OBJECTS) $(ROMX_COMPONENT_LIBS) $(LIBRARY_DIRS)
+endif
+
+-include $(ROMX_COMPONENT_OBJECTS:.o=.d)
+endif
 
 # Compile the Metal shader library used by gfx/drivers/metal.m via
 # [device newDefaultLibrary]. Xcode produces this automatically for the
@@ -424,9 +452,13 @@ bundle: $(TARGET) $(METALLIB)
 	@echo "Assembling $(BUNDLE) (min macOS $(BUNDLE_MIN_OS))"
 	$(Q)rm -rf $(BUNDLE)
 	$(Q)mkdir -p $(BUNDLE)/Contents/MacOS
+	$(Q)mkdir -p $(BUNDLE)/Contents/MacOS/components
 	$(Q)mkdir -p $(BUNDLE)/Contents/Resources/filters/audio
 	$(Q)mkdir -p $(BUNDLE)/Contents/Resources/filters/video
 	$(Q)cp $(TARGET) $(BUNDLE)/Contents/MacOS/$(BUNDLE_EXECUTABLE)
+	$(Q)if [ -n "$(ROMX_COMPONENT_TARGET)" ] && [ -f "$(ROMX_COMPONENT_TARGET)" ]; then \
+		cp "$(ROMX_COMPONENT_TARGET)" $(BUNDLE)/Contents/MacOS/components/; \
+	fi
 	$(Q)chmod +x $(BUNDLE)/Contents/MacOS/$(BUNDLE_EXECUTABLE)
 	$(Q)if [ -f default.metallib ]; then \
 		cp default.metallib $(BUNDLE)/Contents/Resources/default.metallib; \

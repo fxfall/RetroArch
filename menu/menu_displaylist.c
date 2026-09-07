@@ -138,6 +138,10 @@
 #include "../misc/cpufreq/cpufreq.h"
 #include "../input/input_remapping.h"
 
+#ifdef HAVE_CONTENT_COMPONENTS
+#include "../content_component.h"
+#endif
+
 #ifdef HAVE_MICROPHONE
 #include "../audio/microphone_driver.h"
 #endif
@@ -3825,6 +3829,20 @@ static int menu_displaylist_parse_load_content_settings(
                msg_hash_to_str(MENU_ENUM_LABEL_VALUE_CORE_CHEAT_OPTIONS),
                MENU_ENUM_LABEL_CORE_CHEAT_OPTIONS_STR,
                MENU_ENUM_LABEL_CORE_CHEAT_OPTIONS,
+               MENU_SETTING_ACTION, 0, 0, NULL))
+            count++;
+      }
+#endif
+
+#ifdef HAVE_CONTENT_COMPONENTS
+      /* Component actions are content-scoped. Ordinary content retains the
+       * upstream Quick Menu layout. */
+      if (content_component_has_active_actions())
+      {
+         if (menu_entries_append(list,
+               msg_hash_to_str(MENU_ENUM_LABEL_VALUE_CONTENT_COMPONENT_OPTIONS),
+               MENU_ENUM_LABEL_CONTENT_COMPONENT_OPTIONS_STR,
+               MENU_ENUM_LABEL_CONTENT_COMPONENT_OPTIONS,
                MENU_SETTING_ACTION, 0, 0, NULL))
             count++;
       }
@@ -8786,6 +8804,39 @@ unsigned menu_displaylist_build_list(
          }
 #endif
          break;
+#ifdef HAVE_CONTENT_COMPONENTS
+      case DISPLAYLIST_OPTIONS_CONTENT_COMPONENT:
+         if (!content_component_has_active_actions())
+         {
+            menu_displaylist_no_entries_fallback(list, 0, FILE_TYPE_NONE);
+            break;
+         }
+         if (menu_entries_append(list,
+                  msg_hash_to_str(MENU_ENUM_LABEL_VALUE_CONTENT_COMPONENT_WRITE_BACK_SAVE),
+                  MENU_ENUM_LABEL_CONTENT_COMPONENT_WRITE_BACK_SAVE_STR,
+                  MENU_ENUM_LABEL_CONTENT_COMPONENT_WRITE_BACK_SAVE,
+                  MENU_SETTING_ACTION, 0, 0, NULL))
+            count++;
+         if (menu_entries_append(list,
+                  msg_hash_to_str(MENU_ENUM_LABEL_VALUE_CONTENT_COMPONENT_WRITE_BACK_CHEAT),
+                  MENU_ENUM_LABEL_CONTENT_COMPONENT_WRITE_BACK_CHEAT_STR,
+                  MENU_ENUM_LABEL_CONTENT_COMPONENT_WRITE_BACK_CHEAT,
+                  MENU_SETTING_ACTION, 0, 0, NULL))
+            count++;
+         if (menu_entries_append(list,
+                  msg_hash_to_str(MENU_ENUM_LABEL_VALUE_CONTENT_COMPONENT_WRITE_BACK_STATS),
+                  MENU_ENUM_LABEL_CONTENT_COMPONENT_WRITE_BACK_STATS_STR,
+                  MENU_ENUM_LABEL_CONTENT_COMPONENT_WRITE_BACK_STATS,
+                  MENU_SETTING_ACTION, 0, 0, NULL))
+            count++;
+         if (menu_entries_append(list,
+                  msg_hash_to_str(MENU_ENUM_LABEL_VALUE_CONTENT_COMPONENT_WRITE_BACK_ALL),
+                  MENU_ENUM_LABEL_CONTENT_COMPONENT_WRITE_BACK_ALL_STR,
+                  MENU_ENUM_LABEL_CONTENT_COMPONENT_WRITE_BACK_ALL,
+                  MENU_SETTING_ACTION, 0, 0, NULL))
+            count++;
+         break;
+#endif
       case DISPLAYLIST_OPTIONS_CHEATS:
 #ifdef HAVE_CHEATS
          cheat_manager_alloc_if_empty();
@@ -15147,6 +15198,9 @@ bool menu_displaylist_ctl(enum menu_displaylist_ctl_state type,
          case DISPLAYLIST_NETWORK_SETTINGS_LIST:
          case DISPLAYLIST_NETPLAY_LOBBY_FILTERS_LIST:
          case DISPLAYLIST_OPTIONS_CHEATS:
+#ifdef HAVE_CONTENT_COMPONENTS
+         case DISPLAYLIST_OPTIONS_CONTENT_COMPONENT:
+#endif
          case DISPLAYLIST_NETWORK_INFO:
          case DISPLAYLIST_DROPDOWN_LIST_RESOLUTION:
          case DISPLAYLIST_DROPDOWN_LIST_PLAYLIST_DEFAULT_CORE:

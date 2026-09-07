@@ -109,6 +109,46 @@ endif
 
 INCLUDE_DIRS += -I$(LIBRETRO_COMM_DIR)/include -I$(DEPS_DIR)
 
+OBJ += content_component.o
+
+ifeq ($(HAVE_ROMX), 1)
+   # Dynamic components should be linked with the exact libromx archive
+   # selected for the build. Keep a separate override so release/CI builds
+   # can force that archive; the fallback preserves older configure output,
+   # and the boundary check below must reject an unintended shared dependency.
+   ROMX_COMPONENT_LIBS ?= $(ROMX_LIBS)
+   ifeq ($(origin ROMX_COMPONENT_MODE), undefined)
+      ifeq ($(HAVE_DYLIB), 1)
+         ROMX_COMPONENT_MODE := dynamic
+      else
+         ROMX_COMPONENT_MODE := static
+      endif
+   endif
+   DEFINES += -DHAVE_CONTENT_COMPONENTS
+   ifeq ($(ROMX_COMPONENT_MODE), dynamic)
+      DEFINES += -DHAVE_ROMX_COMPONENT_DYNAMIC
+      ifeq ($(OS),Darwin)
+         ROMX_COMPONENT_SUFFIX := .dylib
+      else ifneq ($(findstring Win32,$(OS)),)
+         ROMX_COMPONENT_SUFFIX := .dll
+      else
+         ROMX_COMPONENT_SUFFIX := .so
+      endif
+      ROMX_COMPONENT_TARGET  := components/retroarch_romx_component$(ROMX_COMPONENT_SUFFIX)
+      ROMX_COMPONENT_SOURCES := romx/romx_component.c \
+         romx/romx_frontend.c romx/romx_vfs.c \
+         romx/romx_host_transaction.c romx/romx_save_adapter.c \
+         romx/romx_persistence.c
+   else
+      DEFINES   += -DHAVE_ROMX -DHAVE_ROMX_COMPONENT_STATIC
+      DEF_FLAGS += $(ROMX_CFLAGS)
+      LIBS      += $(ROMX_LIBS)
+      OBJ       += romx/romx_component.o romx/romx_frontend.o \
+         romx/romx_vfs.o romx/romx_host_transaction.o \
+         romx/romx_save_adapter.o romx/romx_persistence.o
+   endif
+endif
+
 # Switches
 #
 ifeq ($(HAVE_NETPLAYDISCOVERY), 1)

@@ -35,6 +35,9 @@
 #include "frontend/frontend_driver.h"
 
 #include "manual_content_scan.h"
+#ifdef HAVE_CONTENT_COMPONENTS
+#include "content_component.h"
+#endif
 
 /* Holds all configuration parameters associated
  * with a manual content scan */
@@ -88,6 +91,34 @@ static scan_settings_t scan_settings = {
 static char scan_core_path[PATH_MAX_LENGTH];
 static char scan_file_exts_core[PATH_MAX_LENGTH];
 static char scan_file_exts_custom[PATH_MAX_LENGTH];
+
+#ifdef HAVE_CONTENT_COMPONENTS
+static bool manual_content_scan_has_extension(const char *extensions,
+      const char *wanted)
+{
+   const char *cursor = extensions;
+
+   if (!extensions || !wanted || !*wanted)
+      return false;
+   while (*cursor)
+   {
+      const char *end = strchr(cursor, '|');
+      size_t length = end ? (size_t)(end - cursor) : strlen(cursor);
+      if (length && length < 32)
+      {
+         char token[32];
+         memcpy(token, cursor, length);
+         token[length] = '\0';
+         if (string_is_equal_noncase(token, wanted))
+            return true;
+      }
+      if (!end)
+         break;
+      cursor = end + 1;
+   }
+   return false;
+}
+#endif
 static char scan_dat_file_path[PATH_MAX_LENGTH];
 static char scan_content_dir[DIR_MAX_LENGTH];
 /* Number of bytes held back when populating
@@ -1519,6 +1550,34 @@ bool manual_content_scan_get_task_config(
     *   delimiters, so find and replace */
    if (*task_config->file_exts)
       string_replace_all_chars(task_config->file_exts, ' ', '|');
+
+#ifdef HAVE_CONTENT_COMPONENTS
+   /* Frontend containers must be visible to core-provided scans, while an
+    * explicit user whitelist remains authoritative. */
+   /* An empty list means "all extensions" to dir_list/database scanning;
+    * leave it empty so ordinary automatic scans keep their upstream
+    * behaviour.  A user-supplied custom list remains authoritative; only a
+    * core-provided whitelist gets the component token automatically. */
+   {
+      const char *component_exts = content_component_container_extensions();
+      if (!task_config->file_exts_custom_set && *task_config->file_exts &&
+          component_exts && *component_exts && !strchr(component_exts, '|') &&
+          !manual_content_scan_has_extension(task_config->file_exts,
+               component_exts))
+      {
+      size_t length = strlen(task_config->file_exts);
+      size_t component_exts_size = strlen(component_exts);
+      if (length + (length ? 1 : 0) + component_exts_size <
+            sizeof(task_config->file_exts))
+      {
+         if (length)
+            task_config->file_exts[length++] = '|';
+         strlcpy(task_config->file_exts + length, component_exts,
+               sizeof(task_config->file_exts) - length);
+      }
+      }
+   }
+#endif
 
    /* Get DAT file path */
    if (  (scan_settings.db_usage == MANUAL_CONTENT_SCAN_USE_DB_DAT_STRICT

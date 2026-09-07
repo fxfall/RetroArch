@@ -62,6 +62,10 @@
 #include "../paths.h"
 #include "../file_path_special.h"
 
+#ifdef HAVE_CONTENT_COMPONENTS
+#include "../content_component.h"
+#endif
+
 #ifdef HAVE_MENU
 #include "../menu/menu_driver.h"
 #endif
@@ -3387,6 +3391,20 @@ bool gfx_thumbnail_update_path(
 
    if (!gfx_thumbnail_is_enabled(path_data, thumbnail_id))
       return false;
+
+#ifdef HAVE_CONTENT_COMPONENTS
+   /* Give the active content component first chance to provide a thumbnail;
+    * failure is non-fatal and falls through to the ordinary database path. */
+   if (content_component_path_supported(path_data->content_path))
+   {
+      char component_error[256];
+      component_error[0] = '\0';
+      if (content_component_thumbnail_path(path_data->content_path,
+               dir_thumbnails, thumbnail_path, PATH_MAX_LENGTH,
+               component_error, sizeof(component_error)))
+         return true;
+   }
+#endif
 
    /* Generate new path */
 

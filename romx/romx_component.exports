@@ -1,0 +1,6 @@
+{
+  global:
+    rarch_content_component_get_v1;
+  local:
+    *;
+};

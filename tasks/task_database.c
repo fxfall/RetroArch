@@ -47,6 +47,10 @@
 #include "../verbosity.h"
 #include "task_database_cue.h"
 
+#ifdef HAVE_CONTENT_COMPONENTS
+#include "../content_component.h"
+#endif
+
 /* Scan result structure for accumulating identification results */
 typedef struct scan_result
 {
@@ -252,6 +256,17 @@ typedef struct database_state_handle
     * for the whole scan, so without a ceiling a large database set
     * costs tens of megabytes.  See task_database_index_budget(). */
    size_t index_budget;
+#ifdef HAVE_CONTENT_COMPONENTS
+   /* A component scan uses its logical identity and never hashes the outer
+    * container. This flag is reset for every content item. */
+   bool component_identity_ready;
+   /* A loose scan reaches MANUAL_SCAN_ITERATE_CONTENT after a database
+    * match as well as after a miss. Keep the two cases distinct so a ROMX
+    * item is not added a second time after the database path already added
+    * it, while a loose miss can still use the metadata fallback. */
+   bool component_identity_matched;
+   rarch_component_info_v1_t component_info;
+#endif
 } database_state_handle_t;
 
 enum db_flags_enum
@@ -305,6 +320,47 @@ typedef struct manual_scan_handle
    retro_task_callback_t user_cb;
 } manual_scan_handle_t;
 
+#if defined(HAVE_LIBRETRODB) && defined(HAVE_CONTENT_COMPONENTS)
+static bool task_database_prepare_component_identity(const char *path,
+      database_state_handle_t *db_state)
+{
+   rarch_component_info_v1_t info = RARCH_COMPONENT_INFO_V1_INIT;
+   char error[256];
+
+   if (!db_state || !content_component_path_supported(path))
+      return false;
+
+   db_state->component_identity_ready = false;
+   db_state->component_identity_matched = false;
+   db_state->component_info = (rarch_component_info_v1_t)
+      RARCH_COMPONENT_INFO_V1_INIT;
+   db_state->crc = 0;
+   db_state->archive_crc = 0;
+   db_state->size = 0;
+   db_state->archive_size = 0;
+   error[0] = '\0';
+   if (!content_component_inspect_path(path, &info, error, sizeof(error)))
+   {
+      RARCH_WARN("[Scanner] Component identity read failed for \"%s\": %s\n",
+            path, error[0] ? error : "invalid container");
+      return false;
+   }
+
+   db_state->component_info = info;
+
+   if (info.has_metadata_crc32)
+      db_state->crc = info.metadata_crc32;
+   else if (info.has_entrypoint_crc32)
+      db_state->crc = info.entrypoint_crc32;
+   else
+      return false;
+
+   db_state->size = info.entrypoint_size;
+   db_state->component_identity_ready = true;
+   return true;
+}
+#endif
+
 enum scan_verdict
 {
    SCAN_VERDICT_CONTINUE = 0,
@@ -313,6 +369,81 @@ enum scan_verdict
    SCAN_VERDICT_NO_DB_MATCH,
    SCAN_VERDICT_ERROR
 };
+
+#ifdef HAVE_CONTENT_COMPONENTS
+/* Adds a frontend container without asking the generic scanner to hash or
+ * archive-expand it. The playlist path remains the original source path. */
+static bool task_database_add_component_scan_result(
+      manual_scan_handle_t *manual_scan, const char *path,
+      const rarch_component_info_v1_t *cached_info)
+{
+   rarch_component_info_v1_t info = RARCH_COMPONENT_INFO_V1_INIT;
+   char error[256];
+   char db_crc[32];
+   char db_name[PATH_MAX_LENGTH];
+   char content_name[NAME_MAX_LENGTH];
+   const char *database_name;
+
+   if (!manual_scan || !manual_scan->task_config || !path || !*path)
+      return false;
+
+   error[0] = '\0';
+   if (cached_info)
+      info = *cached_info;
+   else if (!content_component_inspect_path(path, &info, error, sizeof(error)))
+   {
+      RARCH_WARN("[Scanner] Skipping invalid component content \"%s\": %s\n", path,
+            error[0] ? error : "metadata/entrypoint validation failed");
+      return false;
+   }
+
+   if (info.has_metadata_crc32)
+      snprintf(db_crc, sizeof(db_crc), "%08lX|crc",
+            (unsigned long)info.metadata_crc32);
+   else if (info.has_entrypoint_crc32)
+      snprintf(db_crc, sizeof(db_crc), "%08lX|crc",
+            (unsigned long)info.entrypoint_crc32);
+   else
+      db_crc[0] = '\0';
+
+   if (info.title[0])
+      strlcpy(content_name, info.title, sizeof(content_name));
+   else
+   {
+      fill_pathname_base(content_name, path, sizeof(content_name));
+      path_remove_extension(content_name);
+   }
+   if (!*content_name)
+      return false;
+
+   database_name = *manual_scan->task_config->database_name
+      ? manual_scan->task_config->database_name
+      : manual_scan->task_config->dat_file_path;
+   if (database_name && *database_name &&
+       string_is_equal_noncase(path_get_extension(database_name), "lpl"))
+      strlcpy(db_name, database_name, sizeof(db_name));
+   else
+   {
+      char content_dir_name[NAME_MAX_LENGTH];
+      fill_pathname_base(content_dir_name,
+            manual_scan->task_config->content_dir,
+            sizeof(content_dir_name));
+      if (!*content_dir_name)
+         strlcpy(content_dir_name, "Content", sizeof(content_dir_name));
+      fill_pathname(db_name, content_dir_name, ".lpl", sizeof(db_name));
+   }
+
+   if (!scan_results_add(&manual_scan->scan_results, path, content_name,
+            db_crc, db_name, ""))
+   {
+      RARCH_ERR("[Scanner] Failed to add component result: \"%s\".\n", path);
+      return false;
+   }
+
+   RARCH_DBG("[Scanner] Added component item: %s (%s)\n", path, content_name);
+   return true;
+}
+#endif
 
 static void increase_content_list_index(manual_scan_handle_t *manual_scan)
 {
@@ -974,7 +1105,12 @@ static enum scan_verdict database_info_list_iterate_end_no_match(
    /* If this was a compressed file and no match in the database
     * list was found then expand the search list to include the
     * archive's contents. */
-   if (!path_contains_compressed_file && path_is_compressed_file(path) && _db->task_config->search_archives)
+   if (
+#ifdef HAVE_CONTENT_COMPONENTS
+       !content_component_path_supported(path) &&
+#endif
+       !path_contains_compressed_file && path_is_compressed_file(path) &&
+       _db->task_config->search_archives)
    {
       archive_added=add_files_from_archive(_db, path);
    }
@@ -984,12 +1120,25 @@ static enum scan_verdict database_info_list_iterate_end_no_match(
 
    db_state->list_index   = 0;
    db_state->entry_index  = 0;
+#ifdef HAVE_CONTENT_COMPONENTS
+   /* A component identity is already the CRC/size for every RDB. Keep it
+    * while advancing to the next database; otherwise the scanner would hash
+    * the outer .romx bytes after the first miss. */
+   if (!db_state->component_identity_ready)
+      db_state->size = 0;
+#else
    db_state->size         = 0;
+#endif
    db_state->archive_size = 0;
    db_state->serial[0]    = '\0';
 
+#ifdef HAVE_CONTENT_COMPONENTS
+   if (!db_state->component_identity_ready)
+      db_state->crc = 0;
+#else
    if (db_state->crc != 0)
       db_state->crc = 0;
+#endif
 
    if (db_state->archive_crc != 0)
       db_state->archive_crc = 0;
@@ -1151,6 +1300,11 @@ static enum scan_verdict database_info_list_iterate_found_match(
                          _db->task_config->omit_db_reference ? _db->task_config->dat_file_path : db_playlist_base_str, 
                          archive_name))
       RARCH_ERR("[Scanner] Failed to add result for: \"%s\".\n", entry_lbl);
+
+#ifdef HAVE_CONTENT_COMPONENTS
+   if (db_state->component_identity_ready)
+      db_state->component_identity_matched = true;
+#endif
 
    database_info_list_free(db_state->info);
    free(db_state->info);
@@ -1409,7 +1563,11 @@ static enum scan_verdict task_database_iterate_crc_lookup(
 
    /* Archive did not contain a CRC for this entry,
     * or the file is empty. */
-   if (!db_state->crc)
+   if (!db_state->crc
+#ifdef HAVE_CONTENT_COMPONENTS
+       && !db_state->component_identity_ready
+#endif
+      )
    {
 #ifdef DEBUG
       RARCH_DBG("[Scanner] Extra crc check 1: %x %d / %x %d %s\n",
@@ -1877,6 +2035,21 @@ static int task_database_iterate(
       database_info_handle_t *db,
       bool path_contains_compressed_file)
 {
+#ifdef HAVE_CONTENT_COMPONENTS
+   if (content_component_path_supported(name) &&
+       db->type == DATABASE_TYPE_ITERATE)
+   {
+      /* The start state normally selects CRC_LOOKUP directly. Keep this
+       guard for generic callers: component containers must never fall
+       through to archive probing or a full-container CRC. */
+      if (db_state->component_identity_ready)
+      {
+         db->type = DATABASE_TYPE_CRC_LOOKUP;
+         return SCAN_VERDICT_CONTINUE;
+      }
+      return SCAN_VERDICT_NO_DB_MATCH;
+   }
+#endif
 #ifdef DEBUG
    RARCH_DBG("[Scanner] Type %d, \"%s\" against \"%s\".\n", db->type, name, database_info_get_current_name(db_state));
    RARCH_DBG("[Scanner] Size: min %ld actual %ld max %ld.\n", db_state->min_sizes[db_state->list_index], db_state->size, db_state->max_sizes[db_state->list_index]);
@@ -2712,8 +2885,29 @@ static void task_manual_content_scan_handler(retro_task_t *task)
             task_database_cleanup_state(dbstate);
             dbstate->list_index  = 0;
             dbstate->entry_index = 0;
+#ifdef HAVE_CONTENT_COMPONENTS
+            dbstate->component_identity_ready = false;
+            dbstate->component_identity_matched = false;
+#endif
             task_database_iterate_start(task, dbinfo, content_path);
             manual_scan->status = DATABASE_SCAN_ITERATE_CONTENT;
+#ifdef HAVE_CONTENT_COMPONENTS
+            if (content_component_path_supported(content_path))
+            {
+               /* Prefer the component's logical identity over hashing the
+                * outer container. Strict scans skip identity-less content;
+                * loose scans may still add it through the manual path. */
+               if (task_database_prepare_component_identity(content_path,
+                        dbstate))
+                  dbinfo->type = DATABASE_TYPE_CRC_LOOKUP;
+               else if (manual_scan->task_config->db_usage ==
+                     MANUAL_CONTENT_SCAN_USE_DB_LOOSE)
+                  manual_scan->status = MANUAL_SCAN_ITERATE_CONTENT;
+               else
+                  manual_scan->status = DATABASE_SCAN_ITERATE_NEXT;
+            }
+            else
+#endif
             dbinfo->type = DATABASE_TYPE_ITERATE;
          }
          break;
@@ -2728,7 +2922,12 @@ static void task_manual_content_scan_handler(retro_task_t *task)
             if (!content_path)
                goto task_finished;
 
-            path_contains_compressed_file      = path_contains_compressed_file(content_path);
+            path_contains_compressed_file      =
+#ifdef HAVE_CONTENT_COMPONENTS
+               content_component_path_supported(content_path)
+               ? false :
+#endif
+               path_contains_compressed_file(content_path);
             /* Reminder - remove this shortcut when serial scan inside zip is solved */
             if (path_contains_compressed_file)
                if (dbinfo->type == DATABASE_TYPE_ITERATE)
@@ -2817,6 +3016,33 @@ static void task_manual_content_scan_handler(retro_task_t *task)
                 * This can also conflict with DAT scanning which looks for zip files typically, *
                 * so it is restricted for the full-manual scan case. DB match does its own      *
                 * archive addition. */
+#ifdef HAVE_CONTENT_COMPONENTS
+               if (content_component_path_supported(content_path) &&
+                   manual_scan->task_config->db_usage !=
+                     MANUAL_CONTENT_SCAN_USE_DB_STRICT &&
+                   manual_scan->task_config->db_usage !=
+                     MANUAL_CONTENT_SCAN_USE_DB_DAT_STRICT
+#ifdef HAVE_LIBRETRODB
+                   && !manual_scan->state.component_identity_matched
+#endif
+                  )
+               {
+                  /* A component container is already one frontend content
+                   * item. Never archive-expand or hash the outer bytes.
+                   * Strict scans have already accepted only database matches;
+                   * loose scans reach this fallback only after a miss. */
+                  task_database_add_component_scan_result(manual_scan,
+                        content_path,
+#ifdef HAVE_LIBRETRODB
+                        manual_scan->state.component_identity_ready
+                        ? &manual_scan->state.component_info : NULL
+#else
+                        NULL
+#endif
+                        );
+               }
+               else
+#endif
                if (manual_scan->task_config->search_archives &&
                    path_is_compressed_file(content_path) && 
                    ((*manual_scan->task_config->file_exts

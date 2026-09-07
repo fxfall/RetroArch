@@ -39,6 +39,10 @@
 #include "core_info.h"
 #include "file_path_special.h"
 
+#ifdef HAVE_CONTENT_COMPONENTS
+#include "content_component.h"
+#endif
+
 #if defined(__WINRT__) || defined(WINAPI_FAMILY) && WINAPI_FAMILY == WINAPI_FAMILY_PHONE_APP
 #include "uwp/uwp_func.h"
 #endif
@@ -2081,6 +2085,15 @@ static size_t core_info_list_resolve_all_extensions(
          scr->token_buf, token_pos, _TOKEN_BUF, unique_count,
          total_chars, _HASH_MASK);
 #endif
+#ifdef HAVE_CONTENT_COMPONENTS
+   {
+      const char *component_exts = content_component_container_extensions();
+      if (component_exts && *component_exts && !strchr(component_exts, '|'))
+         CORE_INFO_EXT_INSERT(component_exts, strlen(component_exts),
+               scr->slots, scr->token_buf, token_pos, _TOKEN_BUF,
+               unique_count, total_chars, _HASH_MASK);
+   }
+#endif
 
    if (unique_count == 0)
    {
@@ -2420,6 +2433,9 @@ static bool core_info_does_support_file(
       const core_info_t *core, const char *path)
 {
    const char *ext;
+#ifdef HAVE_CONTENT_COMPONENTS
+   char logical_extension[64];
+#endif
    if (!core || !core->supported_extensions_list)
       return false;
    if (!path || !*path)
@@ -2429,6 +2445,13 @@ static bool core_info_does_support_file(
       return string_list_find_elem(core->supported_extensions_list, "/");
    if (!ext[1])
       return false;
+#ifdef HAVE_CONTENT_COMPONENTS
+   if (content_component_path_supported(path))
+      return content_component_get_logical_extension(path, logical_extension,
+            sizeof(logical_extension))
+         && string_list_find_elem(core->supported_extensions_list,
+               logical_extension);
+#endif
    return string_list_find_elem(core->supported_extensions_list, ext + 1);
 }
 
@@ -2710,7 +2733,11 @@ void core_info_list_get_supported_cores(core_info_list_t *core_info_list,
    p_coreinfo->tmp_path          = path;
 
 #ifdef HAVE_COMPRESSION
-   if (path_is_compressed_file(path))
+   if (
+#ifdef HAVE_CONTENT_COMPONENTS
+       !content_component_path_supported(path) &&
+#endif
+       path_is_compressed_file(path))
       list                       = file_archive_get_file_list(path, NULL);
    p_coreinfo->tmp_list          = list;
 #endif
@@ -2823,6 +2850,16 @@ bool core_info_database_supports_content_path(
    char      *database           = NULL;
    const char      *new_path     = path_basename(database_path);
    core_info_state_t *p_coreinfo = NULL;
+#ifdef HAVE_CONTENT_COMPONENTS
+   char logical_extension[64];
+   const char *content_extension = path_get_extension(path);
+
+   if (content_component_get_logical_extension(path, logical_extension,
+            sizeof(logical_extension)))
+      content_extension = logical_extension;
+#else
+   const char *content_extension = path_get_extension(path);
+#endif
    if (!new_path || !*new_path)
       return false;
    if (!(database = strdup(new_path)))
@@ -2844,7 +2881,7 @@ bool core_info_database_supports_content_path(
          const core_info_t *info = &p_coreinfo->curr_list->list[i];
 
          if (!string_list_find_elem(info->supported_extensions_list,
-                  path_get_extension(path)))
+                  content_extension))
             continue;
 
          if (!string_list_find_elem(info->databases_list, database))

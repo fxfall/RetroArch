@@ -24167,6 +24167,46 @@ MSG_HASH(
    "Set up cheat codes."
    )
 MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_CONTENT_COMPONENT_OPTIONS,
+   "Content Component"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_CONTENT_COMPONENT_OPTIONS,
+   "Manage persistent data for the active external content component."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_CONTENT_COMPONENT_WRITE_BACK_SAVE,
+   "Write Back Saves"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_CONTENT_COMPONENT_WRITE_BACK_SAVE,
+   "Flush standard save data and atomically commit it to the source container."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_CONTENT_COMPONENT_WRITE_BACK_CHEAT,
+   "Write Back Cheats"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_CONTENT_COMPONENT_WRITE_BACK_CHEAT,
+   "Save game-specific cheats and atomically commit them to the source container."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_CONTENT_COMPONENT_WRITE_BACK_STATS,
+   "Write Back Statistics"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_CONTENT_COMPONENT_WRITE_BACK_STATS,
+   "Atomically commit play time and launch statistics to the source container."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_CONTENT_COMPONENT_WRITE_BACK_ALL,
+   "Write Back All"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_CONTENT_COMPONENT_WRITE_BACK_ALL,
+   "Write back saves, cheats and statistics to the source container."
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_VALUE_DISK_OPTIONS,
    "Disc Control"
    )

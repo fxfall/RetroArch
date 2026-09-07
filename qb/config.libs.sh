@@ -720,6 +720,10 @@ fi
 
 # strcasestr: not probed - compat_strcasestr is used by name on every
 # platform, so whether the C library has one is irrelevant.
+# ROMX 0.2.0 component code relies on the public SAVE catalog API introduced
+# by the refactor.  Probe that API instead of the older PSP-only helper so a
+# stale libromx cannot silently satisfy HAVE_ROMX and fail later at link time.
+check_lib '' ROMX -lromx romx_save_catalog_open_path '' '#include <romx/romx.h>'
 check_lib '' MMAP "$CLIB" mmap
 check_lib '' MEMFD_CREATE "$CLIB" memfd_create
 

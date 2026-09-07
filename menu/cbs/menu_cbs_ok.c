@@ -76,6 +76,9 @@
 #include "../../tasks/task_file_transfer.h"
 #include "../../tasks/tasks_internal.h"
 #include "../../input/input_remapping.h"
+#ifdef HAVE_CONTENT_COMPONENTS
+#include "../../content_component.h"
+#endif
 #include "../../paths.h"
 #include "../../playlist.h"
 #include "../../retroarch.h"
@@ -8137,6 +8140,42 @@ static int action_ok_push_default(const char *path,
          ACTION_OK_DL_PUSH_DEFAULT);
 }
 
+#ifdef HAVE_CONTENT_COMPONENTS
+static int action_ok_content_component_write_back(unsigned mask)
+{
+   char message[512];
+   bool okay = content_component_invoke_action(mask, message, sizeof(message));
+   const char *display = message[0] ? message :
+      (okay ? "Component write-back complete" : "Component write-back failed");
+   runloop_msg_queue_push(display, strlen(display), 2, 240, true, NULL,
+         MESSAGE_QUEUE_ICON_DEFAULT,
+         okay ? MESSAGE_QUEUE_CATEGORY_INFO : MESSAGE_QUEUE_CATEGORY_ERROR);
+   if (okay)
+      RARCH_LOG("[Component] %s\n", display);
+   else
+      RARCH_ERR("[Component] %s\n", display);
+   return okay ? 0 : -1;
+}
+
+#define CONTENT_COMPONENT_WRITE_BACK_ACTION(name, mask) \
+static int name(const char *path, const char *label, unsigned type, \
+      size_t idx, size_t entry_idx) \
+{ \
+   (void)path; (void)label; (void)type; (void)idx; (void)entry_idx; \
+   return action_ok_content_component_write_back(mask); \
+}
+
+CONTENT_COMPONENT_WRITE_BACK_ACTION(action_ok_content_component_write_back_save,
+      RARCH_COMPONENT_ACTION_SAVE)
+CONTENT_COMPONENT_WRITE_BACK_ACTION(action_ok_content_component_write_back_cheat,
+      RARCH_COMPONENT_ACTION_CHEAT)
+CONTENT_COMPONENT_WRITE_BACK_ACTION(action_ok_content_component_write_back_stats,
+      RARCH_COMPONENT_ACTION_STATS)
+CONTENT_COMPONENT_WRITE_BACK_ACTION(action_ok_content_component_write_back_all,
+      RARCH_COMPONENT_ACTION_ALL)
+#undef CONTENT_COMPONENT_WRITE_BACK_ACTION
+#endif
+
 static int action_ok_start_core(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx)
 {
@@ -9449,6 +9488,12 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
          {MENU_ENUM_LABEL_LOAD_ARCHIVE,                        action_ok_load_archive},
          {MENU_ENUM_LABEL_CUSTOM_BIND_ALL,                     action_ok_lookup_setting},
          {MENU_ENUM_LABEL_SAVE_STATE,                          action_ok_save_state},
+#ifdef HAVE_CONTENT_COMPONENTS
+         {MENU_ENUM_LABEL_CONTENT_COMPONENT_WRITE_BACK_SAVE,   action_ok_content_component_write_back_save},
+         {MENU_ENUM_LABEL_CONTENT_COMPONENT_WRITE_BACK_CHEAT,  action_ok_content_component_write_back_cheat},
+         {MENU_ENUM_LABEL_CONTENT_COMPONENT_WRITE_BACK_STATS,  action_ok_content_component_write_back_stats},
+         {MENU_ENUM_LABEL_CONTENT_COMPONENT_WRITE_BACK_ALL,    action_ok_content_component_write_back_all},
+#endif
          {MENU_ENUM_LABEL_LOAD_STATE,                          action_ok_load_state},
          {MENU_ENUM_LABEL_UNDO_LOAD_STATE,                     action_ok_undo_load_state},
          {MENU_ENUM_LABEL_UNDO_SAVE_STATE,                     action_ok_undo_save_state},
@@ -9550,6 +9595,9 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
 #endif
          {MENU_ENUM_LABEL_SHADER_OPTIONS,                      action_ok_push_default},
          {MENU_ENUM_LABEL_CORE_CHEAT_OPTIONS,                  action_ok_push_default},
+#ifdef HAVE_CONTENT_COMPONENTS
+         {MENU_ENUM_LABEL_CONTENT_COMPONENT_OPTIONS,           action_ok_push_default},
+#endif
          {MENU_ENUM_LABEL_CORE_INPUT_REMAPPING_OPTIONS,        action_ok_push_default},
          {MENU_ENUM_LABEL_DISC_INFORMATION,                    action_ok_push_default},
          {MENU_ENUM_LABEL_SYSTEM_INFORMATION,                  action_ok_push_default},
