@@ -89,8 +89,8 @@ bool romx_save_adapter_export_save_slot(romx_save_adapter_t *adapter,
       char *error_message, size_t error_message_size);
 
 /* import_save_slot(): creates a new SAVE object. object_key is an opaque,
- * stable ROMX key selected by the caller, not a host path. PSP sources must be
- * a directory containing a valid PARAM.SFO. Other current profiles require a
+ * stable ROMX key selected by the caller, not a host path. PSP and 3DS
+ * sources may be validated directories; other current profiles require a
  * regular file. */
 bool romx_save_adapter_import_save_slot(romx_save_adapter_t *adapter,
       const char *object_key, const char *source_path,

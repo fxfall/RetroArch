@@ -56,8 +56,8 @@
 审查时执行结果：
 
 - libromx 当前工作树：构建成功，`ctest` 为 3/3 通过；
-- `romx/tests/romx_frontend_test.c`：124/124 检查通过；
-- 同一适配测试在 AddressSanitizer + UndefinedBehaviorSanitizer 下为 124/124 通过（macOS 的 LeakSanitizer 不可用，未启用 `detect_leaks`）；
+- `romx/tests/romx_frontend_test.c`：137/137 检查通过；
+- 同一适配测试在 AddressSanitizer + UndefinedBehaviorSanitizer 下为 137/137 通过（macOS 的 LeakSanitizer 不可用，未启用 `detect_leaks`）；
 - `git diff --check` 在两个仓库中均无空白错误。
 
 从已挂载的真实 ROMX 样本抽取的核心 smoke test 结果：
@@ -98,11 +98,11 @@
 
 #### 已处理：Host 清理不跟随符号链接
 
-当前组件删除了重复的 `remove_tree()`，统一使用 `romx/romx_host_transaction.c`。POSIX 使用 `lstat`，Windows 使用 reparse-point 属性检查；回滚只调用这套事务工具，不把链接目标当作目录递归。跨平台的专门 symlink/reparse swap 测试仍应在发布 CI 中补齐。
+当前组件删除了重复的 `remove_tree()`，统一使用 `romx/romx_host_transaction.c`。POSIX 使用 `lstat`，Windows 使用 reparse-point 属性检查；回滚只调用这套事务工具，不把链接目标当作目录递归。适配器套件已覆盖 POSIX 符号链接删除不跟随目标；Windows reparse-point 和 staging swap 仍应在发布 CI 中补齐。
 
 #### 已处理：3DS SAVE 由 libromx profile 驱动
 
-`romx_save_adapter.c` 的 Host 导入、候选枚举和写回统一使用 `romx_save_catalog_*`；恢复使用 `romx_mutable_bundle_get_save_layout()`/`get_save_slot*()`。PSP marker-directory 与 3DS Title/ExtData、Gateway、SaveDataFiler、Citra/Azahar 候选由 libromx profile 判定，组件只映射 RetroArch/Azahar 目标根目录。libromx 的 save-manager 测试覆盖 3DS profile；RetroArch 适配套件当前仍以 flat/PSP fixtures 为主，需在发布前增加真实 3DS 目录 fixture。
+`romx_save_adapter.c` 的 Host 导入、候选枚举和写回统一使用 `romx_save_catalog_*`；恢复使用 `romx_mutable_bundle_get_save_layout()`/`get_save_slot*()`。PSP marker-directory 与 3DS Title/ExtData、Gateway、SaveDataFiler、Citra/Azahar 候选由 libromx profile 判定，组件只映射 RetroArch/Azahar 目标根目录。libromx 的 save-manager 测试覆盖 3DS profile；RetroArch 适配套件已加入带 `saveData.bin` 与附加成员的 Citra/Azahar Title Save fixture，真实模拟器目录和 ExtData 映射仍需平台 CI 复核。
 
 #### 已处理：SAVE destination plan 预检
 
@@ -112,7 +112,7 @@
 
 #### 已处理：STATS 使用 baseline + session delta
 
-`romx_persistence_write_stats()` 在每次写回前重新读取 ROMX 最新 STATS，构造本会话 checkpoint 之后的 delta，并调用 `romx_mutable_stats_merge_session_delta()`；首次写回只提交一次 launch count，后续写回只提交新增 runtime。外部 generation 变化由 libromx merge 处理，overflow/连续写回仍应在发布 CI 中保留回归。
+`romx_persistence_write_stats()` 在每次写回前重新读取 ROMX 最新 STATS，构造本会话 checkpoint 之后的 delta，并调用 `romx_mutable_stats_merge_session_delta()`；首次写回只提交一次 launch count，后续写回只提交新增 runtime。适配器套件已覆盖 baseline/delta 合并和 safe-integer overflow；外部 generation 变化与连续两次真实写回仍应在发布 CI 中保留回归。
 
 实现要点：
 
@@ -143,7 +143,7 @@
 - core selector、scanner 和 thumbnail 路径通过通用 component facade 获取一次 logical identity；缓存键使用 `romx_cover_info_t.sha256`，缺失 hash 时才回退到路径辅助键。
 - VFS 代理对普通路径委托 base VFS；当前实现用同一入口保持普通 ROM/ZIP 回归，发布前应保留 I/O 基准和受控并发测试。
 - `Makefile.common` 中已有的 QuartzCore 变更与 ROMX 无关，提交时必须与 ROMX 重构拆分；当前工作树保留它是为了不覆盖用户已有修改。
-- 矩阵已改为 profile-driven SAVE、动态/静态组件和实际核心条件支持；新增真实 3DS 目录 fixture、symlink/reparse swap、STATS 连续写回和并发测试后，才能关闭发布门禁。
+- 矩阵已改为 profile-driven SAVE、动态/静态组件和实际核心条件支持；当前已新增 3DS Title Save、POSIX symlink cleanup 和 STATS merge/overflow fixture；真实 3DS/ExtData、Windows reparse swap、STATS 连续写回和并发测试仍是发布门禁。
 
 ## 4. 目标架构
 
@@ -532,7 +532,7 @@ git -C ../libromx status --porcelain
 
 ## 13. 必须新增的测试
 
-本轮已经落地的适配器套件位于 `romx/tests/romx_frontend_test.c`，当前为 124/124，覆盖 mapped/materialized/VFS、私有 file-format、普通 ROM/ZIP、flat/PSP SAVE、容量回滚、封面和重复生命周期。下列条目中标注为发布门禁的真实 3DS 目录、symlink/reparse swap、STATS 连续写回、并发和错误 ABI loader 仍应由平台 CI 或 Host integration test 补齐；不能用适配器单元测试的通过替代它们。
+本轮已经落地的适配器套件位于 `romx/tests/romx_frontend_test.c`，当前为 137/137，覆盖 mapped/materialized/VFS、私有 file-format、普通 ROM/ZIP、flat/PSP/3DS Title Save、容量回滚、STATS session delta、POSIX symlink cleanup、封面和重复生命周期。下列条目中标注为发布门禁的真实 3DS/ExtData 目录、Windows reparse swap、STATS 连续写回、并发和错误 ABI loader 仍应由平台 CI 或 Host integration test 补齐；不能用适配器单元测试的通过替代它们。
 
 ### 13.1 组件加载
 
@@ -557,19 +557,20 @@ git -C ../libromx status --porcelain
 - 普通每文件 slot；
 - PSP 有效/无效 `PARAM.SFO`；
 - 3DS Gateway 单文件；
-- 3DS Citra/Azahar Title Save；
+- 3DS Citra/Azahar Title Save（适配器 fixture 已覆盖）；
 - 3DS ExtData；
 - SaveDataFiler strict shape；
 - 多文件 candidate 保持为同一 object/slot；
 - 新 object 使用 libromx 自动 margin；紧凑空间只做一次 exact fallback；
 - replacement 超出旧 extent 时旧对象 byte-for-byte 不变；
 - 两个 stable ID 映射同一 Host 路径时整批拒绝；
-- symlink/reparse swap 不跟随、不越界删除；
+- symlink/reparse swap 不跟随、不越界删除（POSIX fixture 已覆盖，Windows reparse 仍需 CI）；
 - staging 中途失败不留下部分目标；
 - unknown namespace 在组件操作后仍保持不变。
 
 ### 13.4 STATS/CHEAT
 
+- `romx_mutable_stats_merge_session_delta()` 的 counter/timestamp 合并和 safe-integer overflow（适配器 fixture 已覆盖）；
 - 同一 session 连续写回两次不重复 launch count；
 - 第二次只加入上次 checkpoint 后的 runtime；
 - 外部更新 generation 后重新读取并 merge；

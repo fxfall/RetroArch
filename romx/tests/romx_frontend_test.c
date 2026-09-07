@@ -15,6 +15,7 @@
 #include <romx/romx.h>
 
 #include "../romx_frontend.h"
+#include "../romx_host_transaction.h"
 #include "../romx_save_adapter.h"
 #include "../romx_vfs.h"
 
@@ -179,6 +180,12 @@ typedef struct test_paths
    char flat[PATH_MAX];
    char flat_nested[PATH_MAX];
    char psp[PATH_MAX];
+   char n3ds[PATH_MAX];
+   char n3ds_source_root[PATH_MAX];
+   char n3ds_source_leaf[PATH_MAX];
+   char n3ds_source_file[PATH_MAX];
+   char n3ds_source_extra_file[PATH_MAX];
+   char n3ds_export[PATH_MAX];
    char ordinary[PATH_MAX];
    char archive[PATH_MAX];
    char invalid_footer[PATH_MAX];
@@ -534,6 +541,17 @@ static bool test_make_paths(test_paths_t *paths, const char *root)
    TEST_PATH(flat, "flat.romx");
    TEST_PATH(flat_nested, "flat-nested.romx");
    TEST_PATH(psp, "psp.romx");
+   TEST_PATH(n3ds, "n3ds.romx");
+   TEST_PATH(n3ds_source_root, "n3ds-source");
+   if (!test_join(paths->n3ds_source_leaf, sizeof(paths->n3ds_source_leaf),
+            paths->n3ds_source_root,
+            "title/00040000/00030000/data/00000001")) return false;
+   if (!test_join(paths->n3ds_source_file, sizeof(paths->n3ds_source_file),
+            paths->n3ds_source_leaf, "saveData.bin")) return false;
+   if (!test_join(paths->n3ds_source_extra_file,
+            sizeof(paths->n3ds_source_extra_file), paths->n3ds_source_leaf,
+            "extra.bin")) return false;
+   TEST_PATH(n3ds_export, "n3ds-export");
    TEST_PATH(ordinary, "ordinary.gba");
    TEST_PATH(archive, "ordinary.zip");
    TEST_PATH(invalid_footer, "invalid-footer.romx");
@@ -679,6 +697,10 @@ static bool test_build_fixtures(test_paths_t *paths)
       "game.zip", test_single_payload, sizeof(test_single_payload),
       UINT16_C(0x8001), true
    };
+   test_payload_entry_t n3ds_entry = {
+      "game.3ds", test_single_payload, sizeof(test_single_payload),
+      ROMX_FORMAT_N3DS, true
+   };
    test_payload_entry_t multi_entries[3] = {
       { "disc/game.cue", test_cue_payload, sizeof(test_cue_payload) - 1,
          ROMX_FORMAT_CUE, true },
@@ -716,6 +738,10 @@ static bool test_build_fixtures(test_paths_t *paths)
          ROMX_LAUNCH_RAW_SINGLE_FILE, &single_entry, 1,
          "{\"schema_version\":\"0.2.0\",\"name\":\"PSP saves\"}",
          NULL, 0, UINT64_C(131072));
+   okay &= test_write_romx(paths->n3ds, ROMX_PLATFORM_NINTENDO_3DS,
+         ROMX_LAUNCH_RAW_SINGLE_FILE, &n3ds_entry, 1,
+         "{\"schema_version\":\"0.2.0\",\"name\":\"3DS saves\"}",
+         NULL, 0, UINT64_C(131072));
    okay &= test_write_romx(paths->unknown_registry_id, UINT16_C(0x007f),
          ROMX_LAUNCH_RAW_SINGLE_FILE, &single_entry, 1, NULL, NULL, 0, 0);
    okay &= test_write_romx(paths->private_format, ROMX_PLATFORM_ARCADE,
@@ -730,6 +756,9 @@ static bool test_build_fixtures(test_paths_t *paths)
    okay &= test_write_bytes(paths->psp_icon, test_cover_png,
          sizeof(test_cover_png));
    okay &= test_write_bytes(paths->psp_data, "PSP-DATA", 8);
+   okay &= test_make_directory(paths->n3ds_source_leaf);
+   okay &= test_write_bytes(paths->n3ds_source_file, "3DS-SAVE", 8);
+   okay &= test_write_bytes(paths->n3ds_source_extra_file, "3DS-EXTRA", 9);
    okay &= test_make_directory(paths->psp_import_dir);
    okay &= test_write_bytes(paths->psp_import_sfo, test_psp_sfo,
          sizeof(test_psp_sfo));
@@ -1710,6 +1739,168 @@ static bool test_psp_save_slots(const test_paths_t *paths)
    return true;
 }
 
+static bool test_n3ds_title_save_slots(const test_paths_t *paths)
+{
+   romx_save_adapter_t *adapter = NULL;
+   romx_save_slot_info_t imported = {0};
+   romx_save_slot_info_t found = {0};
+   romx_reader_t *reader = NULL;
+   romx_mutable_bundle_t *bundle = NULL;
+   romx_mutable_save_layout_info_t layout =
+      ROMX_MUTABLE_SAVE_LAYOUT_INFO_INIT;
+   romx_mutable_bundle_entry_info_t entry =
+      ROMX_MUTABLE_BUNDLE_ENTRY_INFO_INIT;
+   char output[PATH_MAX];
+   char extra_output[PATH_MAX];
+   char error[TEST_ERROR_SIZE];
+   romx_error_t lib_error = {0};
+   uint32_t entry_count = 0;
+   uint32_t entry_index;
+   bool saw_save_data = false;
+   bool saw_extra = false;
+   bool okay;
+   bool entries_ok;
+
+   error[0] = '\0';
+   okay = test_open_adapter(paths->n3ds, &adapter);
+   test_check_message(okay && romx_save_adapter_save_slot_count(adapter) == 0,
+         "3DS title-save adapter starts with an empty catalog", error);
+   if (!okay)
+      return false;
+
+   error[0] = '\0';
+   okay = romx_save_adapter_import_save_slot(adapter, "n3ds-title",
+         paths->n3ds_source_leaf, &imported, error, sizeof(error));
+   test_check_message(okay, "3DS Citra/Azahar title-save import succeeds",
+         error);
+   test_check(okay && imported.is_directory &&
+         imported.profile == ROMX_SAVE_PROFILE_DIRECTORY &&
+         imported.file_count == 2 &&
+         !strcmp(imported.storage_name, "n3ds-title"),
+         "3DS title save is one profile-validated directory slot");
+   test_check(okay && test_find_slot(adapter, "extra.bin", &found) &&
+         !strcmp(found.stable_id, imported.stable_id) &&
+         found.file_count == 2 &&
+         test_slot_has_file(adapter, &found, "saveData.bin", 8),
+         "3DS title-save slot keeps a stable identity and complete file list");
+
+   test_join(output, sizeof(output), paths->n3ds_export, "saveData.bin");
+   test_join(extra_output, sizeof(extra_output), paths->n3ds_export, "extra.bin");
+   error[0] = '\0';
+   okay = romx_save_adapter_export_save_slot(adapter, imported.stable_id,
+         paths->n3ds_export, error, sizeof(error));
+   test_check_message(okay, "3DS title-save directory exports", error);
+   test_check(okay && test_files_equal(output, "3DS-SAVE", 8) &&
+         test_files_equal(extra_output, "3DS-EXTRA", 9),
+         "3DS title-save export preserves the native file path");
+
+   if (romx_reader_open_path(paths->n3ds, NULL, &reader, &lib_error)
+         != ROMX_OK ||
+       romx_mutable_bundle_open(reader, ROMX_MUTABLE_NAMESPACE_SAVE,
+            "n3ds-title", NULL, &bundle, &lib_error) != ROMX_OK)
+      okay = false;
+   test_check(okay && romx_mutable_bundle_get_save_layout(bundle, &layout,
+         &lib_error) == ROMX_OK &&
+         layout.scope == ROMX_SAVE_SCOPE_3DS_TITLE &&
+         layout.extdata_id_size == 0,
+         "3DS title-save RMBL layout remains Title scope");
+   entries_ok = okay && romx_mutable_bundle_get_entry_count(bundle,
+         &entry_count, &lib_error) == ROMX_OK && entry_count == 2;
+   for (entry_index = 0; entries_ok && entry_index < entry_count;
+        entry_index++)
+   {
+      entry = (romx_mutable_bundle_entry_info_t)
+         ROMX_MUTABLE_BUNDLE_ENTRY_INFO_INIT;
+      entries_ok = romx_mutable_bundle_get_entry(bundle, entry_index, &entry,
+            &lib_error) == ROMX_OK;
+      if (entries_ok && !strcmp(entry.path, "saveData.bin"))
+         saw_save_data = true;
+      else if (entries_ok && !strcmp(entry.path, "extra.bin"))
+         saw_extra = true;
+      else
+         entries_ok = false;
+   }
+   test_check(entries_ok && saw_save_data && saw_extra,
+         "3DS title-save RMBL retains the native relative path");
+   romx_mutable_bundle_close(bundle);
+   romx_reader_close(reader);
+   romx_save_adapter_close(adapter);
+   return true;
+}
+
+static bool test_stats_delta_merge(void)
+{
+   romx_mutable_stats_t baseline = ROMX_MUTABLE_STATS_INIT;
+   romx_mutable_stats_t delta = ROMX_MUTABLE_STATS_INIT;
+   romx_mutable_stats_t merged = ROMX_MUTABLE_STATS_INIT;
+   romx_error_t error = {0};
+   romx_result_t result;
+
+   baseline.flags = ROMX_MUTABLE_STATS_HAS_PLAY_TIME |
+      ROMX_MUTABLE_STATS_HAS_LAUNCH_COUNT |
+      ROMX_MUTABLE_STATS_HAS_FIRST_PLAYED |
+      ROMX_MUTABLE_STATS_HAS_LAST_PLAYED;
+   baseline.play_time_seconds = 100;
+   baseline.launch_count = 4;
+   baseline.first_played_unix_seconds = 200;
+   baseline.last_played_unix_seconds = 300;
+   delta.flags = baseline.flags;
+   delta.play_time_seconds = 25;
+   delta.launch_count = 1;
+   delta.first_played_unix_seconds = 150;
+   delta.last_played_unix_seconds = 350;
+   result = romx_mutable_stats_merge_session_delta(&baseline, &delta, &merged,
+         &error);
+   test_check_message(result == ROMX_OK, "STATS session delta merges", error.message);
+   test_check(result == ROMX_OK && merged.play_time_seconds == 125 &&
+         merged.launch_count == 5 && merged.first_played_unix_seconds == 150 &&
+         merged.last_played_unix_seconds == 350,
+         "STATS merge adds counters and widens session timestamps");
+
+   baseline.play_time_seconds = ROMX_MUTABLE_STATS_MAX_SAFE_INTEGER;
+   delta.play_time_seconds = 1;
+   error.message[0] = '\0';
+   result = romx_mutable_stats_merge_session_delta(&baseline, &delta, &merged,
+         &error);
+   test_check(result != ROMX_OK,
+         "STATS safe-integer overflow is rejected");
+   return true;
+}
+
+static bool test_host_transaction_symlink_safety(const test_paths_t *paths)
+{
+#if defined(_WIN32)
+   (void)paths;
+   test_check(true, "symlink/reparse cleanup is reserved for Windows CI");
+   return true;
+#else
+   char root[PATH_MAX];
+   char target[PATH_MAX];
+   char marker[PATH_MAX];
+   char link_path[PATH_MAX];
+   bool okay;
+
+   if (!test_join(root, sizeof(root), paths->root, "transaction-link-test") ||
+       !test_join(target, sizeof(target), root, "target") ||
+       !test_join(marker, sizeof(marker), target, "keep.txt") ||
+       !test_join(link_path, sizeof(link_path), root, "link"))
+      return false;
+   okay = test_make_directory(target) &&
+      test_write_bytes(marker, "KEEP", 4) && symlink(target, link_path) == 0;
+   test_check(okay && romx_host_path_is_link(link_path),
+         "host transaction detects a symbolic link");
+   if (okay)
+   {
+      okay = romx_host_remove_tree(link_path) && !path_is_valid(link_path) &&
+         path_is_directory(target) && test_files_equal(marker, "KEEP", 4);
+      test_check(okay,
+            "host transaction removes the link without following its target");
+   }
+   (void)romx_host_remove_tree(root);
+   return true;
+#endif
+}
+
 static bool test_non_psp_nested_files_are_independent(const test_paths_t *paths)
 {
    romx_mutable_bundle_path_entry_t entries[2];
@@ -1948,6 +2139,9 @@ int main(int argc, char **argv)
    (void)test_flat_save_slots(&paths);
    (void)test_non_psp_nested_files_are_independent(&paths);
    (void)test_psp_save_slots(&paths);
+   (void)test_n3ds_title_save_slots(&paths);
+   (void)test_stats_delta_merge();
+   (void)test_host_transaction_symlink_safety(&paths);
    (void)test_ordinary_and_archive_regressions(&paths);
    (void)test_repeated_lifecycle(&paths);
 
