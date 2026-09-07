@@ -24,7 +24,7 @@
 | ROMX 转换与结构校验 | Saturn CUE+BIN 3 个、PlayStation CHD 2 个、CCD+IMG+SUB 1 个、PBP 3 个、GameCube ISO 2 个、GCM 2 个 | 支持，13/13 通过 `verify` |
 | mutable 写入校验 | 虚假 SAVE/CHEAT/STATS 写入、重新读取、generation 递增 | 支持，13/13 容器成功 |
 | RetroArch macOS arm64 | 动态组件与静态 ABI 两种构建；实际 ROMX 启动回归 | 支持 |
-| RetroArch ROMX adapter suite | mapped/materialized/VFS、flat/PSP/3DS Title Save、STATS delta/overflow、POSIX symlink cleanup、普通 ROM/ZIP | 支持，137/137；ASan/UBSan 137/137 |
+| RetroArch ROMX adapter suite | mapped/materialized/VFS、flat/PSP/3DS Title Save/ExtData、STATS delta/overflow、POSIX symlink cleanup、普通 ROM/ZIP | 支持，145/145；ASan/UBSan 145/145 |
 | 真实 ROMX 样本 smoke test | GBA、PSP、3DS、FBNeo 私有 ZIP、Saturn CUE+BIN、PlayStation CHD；普通 NDS 回归 | 支持（BIOS/Vulkan 条件见核心矩阵） |
 | Yabause/YabaSanshiro macOS arm64 | ROMX VFS adapter 动态库构建 | 支持 |
 
@@ -41,7 +41,7 @@
 | 普通文件回归 | 普通 ROM 继续使用上游透明 VFS；ZIP 使用现有 archive parser | 支持 |
 | profile 驱动存档 | 由 libromx SAVE catalog/profile 决定单文件、PSP marker-directory 或 3DS directory-per-save；不会按目录猜测 | 支持 |
 | PSP/3DS 存档 | PSP 经过有效 `DISC_ID`/目录规则验证；3DS 支持 Title/ExtData、Gateway、SaveDataFiler、Citra/Azahar 目录候选 | 支持 |
-| SAVE/CHEAT/STATS | enumerate、inspect、import、replace、export、delete、实际路径、重新扫描、stable id；3DS Title Save 与 STATS session delta/overflow fixture | 支持 |
+| SAVE/CHEAT/STATS | enumerate、inspect、import、replace、export、delete、实际路径、重新扫描、stable id；3DS Title Save/ExtData 与 STATS session delta/overflow fixture | 支持 |
 | 原子回滚 | 容量不足或中途失败时恢复写入前状态 | 支持 |
 | 重复生命周期 | mapped、materialized、VFS、mutable session 的反复打开关闭和资源释放 | 支持 |
 

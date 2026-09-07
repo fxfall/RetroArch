@@ -186,6 +186,11 @@ typedef struct test_paths
    char n3ds_source_file[PATH_MAX];
    char n3ds_source_extra_file[PATH_MAX];
    char n3ds_export[PATH_MAX];
+   char n3ds_extdata[PATH_MAX];
+   char n3ds_extdata_source_root[PATH_MAX];
+   char n3ds_extdata_source_leaf[PATH_MAX];
+   char n3ds_extdata_source_file[PATH_MAX];
+   char n3ds_extdata_export[PATH_MAX];
    char ordinary[PATH_MAX];
    char archive[PATH_MAX];
    char invalid_footer[PATH_MAX];
@@ -552,6 +557,16 @@ static bool test_make_paths(test_paths_t *paths, const char *root)
             sizeof(paths->n3ds_source_extra_file), paths->n3ds_source_leaf,
             "extra.bin")) return false;
    TEST_PATH(n3ds_export, "n3ds-export");
+   TEST_PATH(n3ds_extdata, "n3ds-extdata.romx");
+   TEST_PATH(n3ds_extdata_source_root, "n3ds-extdata-source");
+   if (!test_join(paths->n3ds_extdata_source_leaf,
+            sizeof(paths->n3ds_extdata_source_leaf),
+            paths->n3ds_extdata_source_root,
+            "extdata/00000000/000016e1")) return false;
+   if (!test_join(paths->n3ds_extdata_source_file,
+            sizeof(paths->n3ds_extdata_source_file),
+            paths->n3ds_extdata_source_leaf, "user/game0.sav")) return false;
+   TEST_PATH(n3ds_extdata_export, "n3ds-extdata-export");
    TEST_PATH(ordinary, "ordinary.gba");
    TEST_PATH(archive, "ordinary.zip");
    TEST_PATH(invalid_footer, "invalid-footer.romx");
@@ -742,6 +757,11 @@ static bool test_build_fixtures(test_paths_t *paths)
          ROMX_LAUNCH_RAW_SINGLE_FILE, &n3ds_entry, 1,
          "{\"schema_version\":\"0.2.0\",\"name\":\"3DS saves\"}",
          NULL, 0, UINT64_C(131072));
+   okay &= test_write_romx(paths->n3ds_extdata,
+         ROMX_PLATFORM_NINTENDO_3DS, ROMX_LAUNCH_RAW_SINGLE_FILE,
+         &n3ds_entry, 1,
+         "{\"schema_version\":\"0.2.0\",\"name\":\"3DS ExtData\"}",
+         NULL, 0, UINT64_C(131072));
    okay &= test_write_romx(paths->unknown_registry_id, UINT16_C(0x007f),
          ROMX_LAUNCH_RAW_SINGLE_FILE, &single_entry, 1, NULL, NULL, 0, 0);
    okay &= test_write_romx(paths->private_format, ROMX_PLATFORM_ARCADE,
@@ -759,6 +779,9 @@ static bool test_build_fixtures(test_paths_t *paths)
    okay &= test_make_directory(paths->n3ds_source_leaf);
    okay &= test_write_bytes(paths->n3ds_source_file, "3DS-SAVE", 8);
    okay &= test_write_bytes(paths->n3ds_source_extra_file, "3DS-EXTRA", 9);
+   okay &= test_make_directory(paths->n3ds_extdata_source_leaf);
+   okay &= test_write_bytes(paths->n3ds_extdata_source_file,
+         "3DS-EXTDATA", 11);
    okay &= test_make_directory(paths->psp_import_dir);
    okay &= test_write_bytes(paths->psp_import_sfo, test_psp_sfo,
          sizeof(test_psp_sfo));
@@ -1828,6 +1851,75 @@ static bool test_n3ds_title_save_slots(const test_paths_t *paths)
    return true;
 }
 
+static bool test_n3ds_extdata_slots(const test_paths_t *paths)
+{
+   romx_save_adapter_t *adapter = NULL;
+   romx_save_slot_info_t imported = {0};
+   romx_save_slot_info_t found = {0};
+   romx_reader_t *reader = NULL;
+   romx_mutable_bundle_t *bundle = NULL;
+   romx_mutable_save_layout_info_t layout =
+      ROMX_MUTABLE_SAVE_LAYOUT_INFO_INIT;
+   romx_mutable_bundle_entry_info_t entry =
+      ROMX_MUTABLE_BUNDLE_ENTRY_INFO_INIT;
+   char output[PATH_MAX];
+   char error[TEST_ERROR_SIZE];
+   romx_error_t lib_error = {0};
+   bool okay;
+
+   error[0] = '\0';
+   okay = test_open_adapter(paths->n3ds_extdata, &adapter);
+   test_check_message(okay && romx_save_adapter_save_slot_count(adapter) == 0,
+         "3DS ExtData adapter starts with an empty catalog", error);
+   if (!okay)
+      return false;
+
+   error[0] = '\0';
+   okay = romx_save_adapter_import_save_slot(adapter, "n3ds-extdata",
+         paths->n3ds_extdata_source_leaf, &imported, error, sizeof(error));
+   test_check_message(okay, "3DS Citra/Azahar ExtData import succeeds", error);
+   test_check(okay && imported.is_directory &&
+         imported.profile == ROMX_SAVE_PROFILE_DIRECTORY &&
+         imported.file_count == 1 &&
+         !strcmp(imported.storage_name, "n3ds-extdata"),
+         "3DS ExtData is one profile-validated directory slot");
+   test_check(okay && test_find_slot(adapter, "game0.sav", &found) &&
+         !strcmp(found.stable_id, imported.stable_id) &&
+         test_slot_has_file(adapter, &found,
+            "extdata/00000000/000016e1/user/game0.sav", 11),
+         "3DS ExtData slot keeps its canonical native path");
+
+   test_join(output, sizeof(output), paths->n3ds_extdata_export,
+         "extdata/00000000/000016e1/user/game0.sav");
+   error[0] = '\0';
+   okay = romx_save_adapter_export_save_slot(adapter, imported.stable_id,
+         paths->n3ds_extdata_export, error, sizeof(error));
+   test_check_message(okay, "3DS ExtData directory exports", error);
+   test_check(okay && test_files_equal(output, "3DS-EXTDATA", 11),
+         "3DS ExtData export preserves the canonical tree");
+
+   if (romx_reader_open_path(paths->n3ds_extdata, NULL, &reader, &lib_error)
+         != ROMX_OK ||
+       romx_mutable_bundle_open(reader, ROMX_MUTABLE_NAMESPACE_SAVE,
+            "n3ds-extdata", NULL, &bundle, &lib_error) != ROMX_OK)
+      okay = false;
+   test_check(okay && romx_mutable_bundle_get_save_layout(bundle, &layout,
+         &lib_error) == ROMX_OK &&
+         layout.scope == ROMX_SAVE_SCOPE_3DS_EXTDATA &&
+         layout.extdata_id_size == 16 &&
+         !strcmp(layout.extdata_id, "00000000000016E1"),
+         "3DS ExtData RMBL layout retains scope and ID");
+   test_check(okay && romx_mutable_bundle_get_entry(bundle, 0, &entry,
+         &lib_error) == ROMX_OK &&
+         !strcmp(entry.path,
+            "extdata/00000000/000016e1/user/game0.sav"),
+         "3DS ExtData RMBL retains the canonical relative path");
+   romx_mutable_bundle_close(bundle);
+   romx_reader_close(reader);
+   romx_save_adapter_close(adapter);
+   return true;
+}
+
 static bool test_stats_delta_merge(void)
 {
    romx_mutable_stats_t baseline = ROMX_MUTABLE_STATS_INIT;
@@ -2140,6 +2232,7 @@ int main(int argc, char **argv)
    (void)test_non_psp_nested_files_are_independent(&paths);
    (void)test_psp_save_slots(&paths);
    (void)test_n3ds_title_save_slots(&paths);
+   (void)test_n3ds_extdata_slots(&paths);
    (void)test_stats_delta_merge();
    (void)test_host_transaction_symlink_safety(&paths);
    (void)test_ordinary_and_archive_regressions(&paths);

@@ -24,7 +24,7 @@
 | ROMX conversion and structural verification | 3 Saturn CUE+BIN, 2 PlayStation CHD, 1 CCD+IMG+SUB, 3 PBP, 2 GameCube ISO, and 2 GCM containers | Supported, 13/13 passed `verify` |
 | Mutable write verification | Fake SAVE/CHEAT/STATS writes, rereads, and generation increments | Supported, all 13 containers succeeded |
 | RetroArch macOS arm64 | Dynamic component and static ABI builds; real-ROMX startup regression | Supported |
-| RetroArch ROMX adapter suite | mapped/materialized/VFS, flat/PSP/3DS Title Save, STATS delta/overflow, POSIX symlink cleanup, ordinary ROM/ZIP | Supported, 137/137; ASan/UBSan 137/137 |
+| RetroArch ROMX adapter suite | mapped/materialized/VFS, flat/PSP/3DS Title Save/ExtData, STATS delta/overflow, POSIX symlink cleanup, ordinary ROM/ZIP | Supported, 145/145; ASan/UBSan 145/145 |
 | Real ROMX sample smoke tests | GBA, PSP, 3DS, FBNeo private ZIP, Saturn CUE+BIN, PlayStation CHD; ordinary NDS regression | Supported (BIOS/Vulkan conditions are listed in the core matrix) |
 | Yabause/YabaSanshiro macOS arm64 | ROMX VFS adapter dynamic-library builds | Supported |
 
@@ -41,7 +41,7 @@
 | Ordinary-file regression | Ordinary ROMs stay on transparent upstream VFS; ZIP uses the existing archive parser | Supported |
 | Profile-driven saves | libromx SAVE catalog/profile selects single-file, PSP marker-directory, or 3DS directory-per-save grouping; no directory guessing | Supported |
 | PSP/3DS saves | PSP uses validated `DISC_ID`/directory rules; 3DS covers Title/ExtData, Gateway, SaveDataFiler, and Citra/Azahar directory candidates | Supported |
-| SAVE/CHEAT/STATS | Enumerate, inspect, import, replace, export, delete, actual paths, rescans, and stable IDs; 3DS Title Save and STATS session-delta/overflow fixtures | Supported |
+| SAVE/CHEAT/STATS | Enumerate, inspect, import, replace, export, delete, actual paths, rescans, and stable IDs; 3DS Title Save/ExtData and STATS session-delta/overflow fixtures | Supported |
 | Atomic rollback | Capacity or mid-write failure restores the pre-write state | Supported |
 | Repeated lifecycle | Repeated mapped, materialized, VFS, and mutable session open/close with resource cleanup | Supported |
 

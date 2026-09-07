@@ -20,8 +20,8 @@ The suite covers:
 - embedded cover extraction, deterministic cache publication and missing
   metadata fallback;
 - flat single-file SAVE slots (including nested paths that must not be
-  auto-grouped), PSP directory slots and a Citra/Azahar 3DS Title Save
-  directory candidate, including slot counts, complete member lists, stable
+  auto-grouped), PSP directory slots and Citra/Azahar 3DS Title Save/ExtData
+  directory candidates, including slot counts, complete member lists, stable
   IDs, export paths, rescans, import, replace, delete and capacity-failure
   rollback;
 - session-delta STATS arithmetic/overflow checks and POSIX symlink-safe host
@@ -39,9 +39,10 @@ The main coverage groups are `test_standard_recognition_and_metadata`,
 `test_single_mapping_and_materialization`,
 `test_multi_vfs`, `test_cover_and_metadata_fallback`,
 `test_flat_save_slots`, `test_non_psp_nested_files_are_independent`,
-`test_psp_save_slots`, `test_n3ds_title_save_slots`, `test_stats_delta_merge`,
+`test_psp_save_slots`, `test_n3ds_title_save_slots`, `test_n3ds_extdata_slots`,
+`test_stats_delta_merge`,
 `test_host_transaction_symlink_safety`, `test_ordinary_and_archive_regressions`
-and `test_repeated_lifecycle` (the current suite reports 137 checks).
+and `test_repeated_lifecycle` (the current suite reports 145 checks).
 
 The test intentionally stops at the adapter boundary. A real emulator core is
 not loaded: core-facing `retro_game_info` data, the logical path and the VFS

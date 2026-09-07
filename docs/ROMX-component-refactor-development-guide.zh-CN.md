@@ -56,8 +56,8 @@
 审查时执行结果：
 
 - libromx 当前工作树：构建成功，`ctest` 为 3/3 通过；
-- `romx/tests/romx_frontend_test.c`：137/137 检查通过；
-- 同一适配测试在 AddressSanitizer + UndefinedBehaviorSanitizer 下为 137/137 通过（macOS 的 LeakSanitizer 不可用，未启用 `detect_leaks`）；
+- `romx/tests/romx_frontend_test.c`：145/145 检查通过；
+- 同一适配测试在 AddressSanitizer + UndefinedBehaviorSanitizer 下为 145/145 通过（macOS 的 LeakSanitizer 不可用，未启用 `detect_leaks`）；
 - `git diff --check` 在两个仓库中均无空白错误。
 
 从已挂载的真实 ROMX 样本抽取的核心 smoke test 结果：
@@ -102,7 +102,7 @@
 
 #### 已处理：3DS SAVE 由 libromx profile 驱动
 
-`romx_save_adapter.c` 的 Host 导入、候选枚举和写回统一使用 `romx_save_catalog_*`；恢复使用 `romx_mutable_bundle_get_save_layout()`/`get_save_slot*()`。PSP marker-directory 与 3DS Title/ExtData、Gateway、SaveDataFiler、Citra/Azahar 候选由 libromx profile 判定，组件只映射 RetroArch/Azahar 目标根目录。libromx 的 save-manager 测试覆盖 3DS profile；RetroArch 适配套件已加入带 `saveData.bin` 与附加成员的 Citra/Azahar Title Save fixture，真实模拟器目录和 ExtData 映射仍需平台 CI 复核。
+`romx_save_adapter.c` 的 Host 导入、候选枚举和写回统一使用 `romx_save_catalog_*`；恢复使用 `romx_mutable_bundle_get_save_layout()`/`get_save_slot*()`。PSP marker-directory 与 3DS Title/ExtData、Gateway、SaveDataFiler、Citra/Azahar 候选由 libromx profile 判定，组件只映射 RetroArch/Azahar 目标根目录。libromx 的 save-manager 测试覆盖 3DS profile；RetroArch 适配套件已加入带 `saveData.bin` 与附加成员的 Citra/Azahar Title Save fixture，以及 `extdata/00000000/<id>/user` 的 ExtData fixture；真实模拟器目录和核心侧 ExtData 映射仍需平台 CI 复核。
 
 #### 已处理：SAVE destination plan 预检
 
@@ -143,7 +143,7 @@
 - core selector、scanner 和 thumbnail 路径通过通用 component facade 获取一次 logical identity；缓存键使用 `romx_cover_info_t.sha256`，缺失 hash 时才回退到路径辅助键。
 - VFS 代理对普通路径委托 base VFS；当前实现用同一入口保持普通 ROM/ZIP 回归，发布前应保留 I/O 基准和受控并发测试。
 - `Makefile.common` 中已有的 QuartzCore 变更与 ROMX 无关，提交时必须与 ROMX 重构拆分；当前工作树保留它是为了不覆盖用户已有修改。
-- 矩阵已改为 profile-driven SAVE、动态/静态组件和实际核心条件支持；当前已新增 3DS Title Save、POSIX symlink cleanup 和 STATS merge/overflow fixture；真实 3DS/ExtData、Windows reparse swap、STATS 连续写回和并发测试仍是发布门禁。
+- 矩阵已改为 profile-driven SAVE、动态/静态组件和实际核心条件支持；当前已新增 3DS Title Save/ExtData、POSIX symlink cleanup 和 STATS merge/overflow fixture；真实 3DS 核心路径、Windows reparse swap、STATS 连续写回和并发测试仍是发布门禁。
 
 ## 4. 目标架构
 
@@ -532,7 +532,7 @@ git -C ../libromx status --porcelain
 
 ## 13. 必须新增的测试
 
-本轮已经落地的适配器套件位于 `romx/tests/romx_frontend_test.c`，当前为 137/137，覆盖 mapped/materialized/VFS、私有 file-format、普通 ROM/ZIP、flat/PSP/3DS Title Save、容量回滚、STATS session delta、POSIX symlink cleanup、封面和重复生命周期。下列条目中标注为发布门禁的真实 3DS/ExtData 目录、Windows reparse swap、STATS 连续写回、并发和错误 ABI loader 仍应由平台 CI 或 Host integration test 补齐；不能用适配器单元测试的通过替代它们。
+本轮已经落地的适配器套件位于 `romx/tests/romx_frontend_test.c`，当前为 145/145，覆盖 mapped/materialized/VFS、私有 file-format、普通 ROM/ZIP、flat/PSP/3DS Title Save/ExtData、容量回滚、STATS session delta、POSIX symlink cleanup、封面和重复生命周期。下列条目中标注为发布门禁的真实 3DS 核心路径、Windows reparse swap、STATS 连续写回、并发和错误 ABI loader 仍应由平台 CI 或 Host integration test 补齐；不能用适配器单元测试的通过替代它们。
 
 ### 13.1 组件加载
 
@@ -558,7 +558,7 @@ git -C ../libromx status --porcelain
 - PSP 有效/无效 `PARAM.SFO`；
 - 3DS Gateway 单文件；
 - 3DS Citra/Azahar Title Save（适配器 fixture 已覆盖）；
-- 3DS ExtData；
+- 3DS ExtData（canonical `extdata/00000000/<id>/user` fixture 已覆盖）；
 - SaveDataFiler strict shape；
 - 多文件 candidate 保持为同一 object/slot；
 - 新 object 使用 libromx 自动 margin；紧凑空间只做一次 exact fallback；
